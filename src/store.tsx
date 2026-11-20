@@ -49,7 +49,8 @@ type Action =
   | { type: "roll"; today: string }
   | { type: "reveal" }
   | { type: "add-events"; instrument: InstrumentId; events: NoteEvent[] }
-  | { type: "save-track"; instrument: InstrumentId; events: NoteEvent[] }
+  | { type: "save-track"; instrument: InstrumentId; events: NoteEvent[]; id?: string }
+  | { type: "replace-track"; id: string; instrument: InstrumentId; events: NoteEvent[] }
   | { type: "delete-event"; instrument: InstrumentId; index: number }
   | { type: "resize-event"; instrument: InstrumentId; index: number; duration: number }
   | { type: "mute"; instrument: InstrumentId }
@@ -195,8 +196,17 @@ function reducer(state: GameState, action: Action): GameState {
     case "save-track": {
       if (current.locked || action.events.length === 0) return state;
       const track = emptyTrack(action.instrument);
+      if (action.id) track.id = action.id;
       track.events = sorted(cloneNotes(action.events).map((event) => ({ ...event, instrument: action.instrument })));
       return commit({ ...current, tracks: [...current.tracks, track] });
+    }
+    case "replace-track": {
+      if (current.locked) return state;
+      const events = sorted(cloneNotes(action.events).map((event) => ({ ...event, instrument: action.instrument })));
+      return commit({
+        ...current,
+        tracks: current.tracks.map((track) => (track.id === action.id ? { ...track, instrument: action.instrument, events } : track)),
+      });
     }
     case "delete-event":
       if (current.locked) return state;

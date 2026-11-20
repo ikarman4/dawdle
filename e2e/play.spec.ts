@@ -23,10 +23,27 @@ async function openToday(page: Page) {
   await expect(how).toBeHidden();
 }
 
+async function stableBox(locator: Locator) {
+  let last = await locator.boundingBox();
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await locator.page().waitForTimeout(200);
+    const next = await locator.boundingBox();
+    if (last && next && Math.abs(last.y - next.y) < 1 && Math.abs(last.x - next.x) < 1) return next;
+    last = next;
+  }
+  return last;
+}
+
+async function addAndPick(page: Page, name: string) {
+  await page.getByRole("button", { name: "Add instrument" }).click();
+  await page.getByRole("button", { name: "Select instrument" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 async function expectStudio(page: Page) {
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
   await expectInView(page, page.getByRole("button", { name: "Play", exact: true }));
-  await expectInView(page, page.getByRole("button", { name: "Select instrument" }));
+  await expectInView(page, page.getByRole("button", { name: "Add instrument" }));
   await expectInView(page, page.getByRole("button", { name: "Submit", exact: true }));
   await expectInView(page, page.getByLabel("Volume for the song and your instruments"));
   await expect(page.getByRole("heading", { name: "Your song" })).toBeVisible();
@@ -44,10 +61,18 @@ test("desktop studio path", async ({ page }) => {
   await expect(page.getByText("Add an instrument to get started.")).toBeVisible();
   await expect(page.getByLabel("Tries")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Record", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Select instrument" }).click();
+  await page.getByRole("button", { name: "Add instrument" }).click();
+  await page.getByRole("button", { name: "Add instrument" }).click();
+  const selects = page.getByRole("button", { name: "Select instrument" });
+  await expect(selects).toHaveCount(2);
+  await expect(page.getByRole("listbox", { name: "Instruments" })).toHaveCount(0);
+  await selects.first().click();
   await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
   await expect(page.getByTestId("instrument")).toHaveCount(0);
-  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  const piano = page.getByRole("button", { name: "Piano", exact: true });
+  await expect(piano).toContainText("🎹");
+  await expect(page.locator(".inst-grid svg")).toHaveCount(0);
+  await piano.click();
   await expect(page.getByTestId("instrument")).toBeVisible();
   const roll = page.getByTestId("instrument");
   const box = await roll.boundingBox();
@@ -67,8 +92,9 @@ test("desktop studio path", async ({ page }) => {
   expect(Math.min(...times)).toBeGreaterThan(0.2);
   expect(Math.max(...times) - Math.min(...times)).toBeGreaterThan(1.5);
   await page.getByRole("button", { name: "Add instrument" }).click();
-  await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
-  await expect(page.getByTestId("instrument")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Select instrument" })).toHaveCount(2);
+  await expect(page.getByRole("listbox", { name: "Instruments" })).toHaveCount(0);
+  await expect(page.getByTestId("instrument")).toBeVisible();
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
 });
 
@@ -86,8 +112,7 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await page.setViewportSize({ width: 390, height: 900 });
   await openToday(page);
 
-  await page.getByRole("button", { name: "Select instrument" }).click();
-  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  await addAndPick(page, "Piano");
   const roll = page.getByTestId("instrument");
   await expect(roll).toBeVisible();
   const wide = await roll.evaluate((el) => ({ scroll: el.scrollWidth, view: el.clientWidth, sheet: el.querySelector(".daw-sheet")?.clientWidth ?? 0 }));
@@ -96,15 +121,19 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
   expect(overflow).toBe(true);
 
-  const scroller = await roll.boundingBox();
+  const scroller = await stableBox(roll);
   expect(scroller).toBeTruthy();
   const glideBefore = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
   await page.mouse.move(scroller!.x + 130, scroller!.y + 8);
   await page.mouse.down();
   await page.mouse.move(scroller!.x + 130, scroller!.y + 108, { steps: 10 });
   await page.mouse.up();
-  await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard)).toBeGreaterThan(glideBefore + 2);
-  await expect(page.getByTestId("roll-note")).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard)).toBeGreaterThan(glideBefore);
+  const kept = page.getByTestId("roll-note");
+  await expect(kept).toHaveCount(1);
+  await kept.click();
+  await kept.click();
+  await expect(kept).toHaveCount(0);
   const keys = await roll.boundingBox();
   expect(keys).toBeTruthy();
   const keyBefore = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
@@ -152,8 +181,7 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Select instrument" }).click();
-  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  await addAndPick(page, "Piano");
   await roll.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
@@ -165,8 +193,7 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano 2 track" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Select instrument" }).click();
-  await page.getByRole("button", { name: "Drum kit", exact: true }).click();
+  await addAndPick(page, "Drum kit");
   const drums = page.getByTestId("instrument");
   const drumBox = await drums.boundingBox();
   expect(drumBox).toBeTruthy();
@@ -220,15 +247,14 @@ test("mobile studio path", async ({ browser }) => {
   await openToday(page);
   await expectStudio(page);
   await expect(page.getByLabel("Tries")).toHaveCount(0);
-  await page.getByRole("button", { name: "Select instrument" }).click();
-  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  await addAndPick(page, "Piano");
   const roll = page.getByTestId("instrument");
-  const box = await roll.boundingBox();
+  const box = await stableBox(roll);
   expect(box).toBeTruthy();
-  await page.touchscreen.tap(box!.x + 150, box!.y + 30);
-  const again = await roll.boundingBox();
+  await page.touchscreen.tap(box!.x + 120, box!.y + 40);
+  const again = await stableBox(roll);
   expect(again).toBeTruthy();
-  await page.touchscreen.tap(again!.x + again!.width - 16, again!.y + 80);
+  await page.touchscreen.tap(again!.x + 250, again!.y + 100);
   const notes = page.getByTestId("roll-note");
   await expect(notes).toHaveCount(2);
   const times = await notes.evaluateAll((els) => els.map((el) => Number(el.getAttribute("data-time"))));

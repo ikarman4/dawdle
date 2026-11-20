@@ -24,7 +24,24 @@ import {
   type NoteEvent,
   type Track,
 } from "./types";
-import { InstrumentGlyph, NoteRoll, Waveform, rowsFor } from "./widgets";
+import { NoteRoll, Waveform, rowsFor } from "./widgets";
+
+interface SongRow {
+  id: string;
+  instrument: InstrumentId | null;
+  trackId: string | null;
+}
+
+let rowSerial = 0;
+
+function newRowId(): string {
+  rowSerial += 1;
+  return `row-${rowSerial.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function rowsFromTracks(tracks: Track[]): SongRow[] {
+  return tracks.map((track) => ({ id: track.id, instrument: track.instrument, trackId: track.id }));
+}
 
 function Caret({ up }: { up: boolean }) {
   return (
@@ -54,13 +71,16 @@ export function PlayView() {
   const [armed, setArmed] = useState<InstrumentId>("piano");
   const [draft, setDraft] = useState<NoteEvent[]>([]);
   const [writer, setWriter] = useState<"closed" | "pick" | "roll">("closed");
-  const [folded, setFolded] = useState<string[]>([]);
+  const [rows, setRows] = useState<SongRow[]>(() => rowsFromTracks(day.tracks));
+  const [activeRow, setActiveRow] = useState<string | null>(null);
   const [mixOn, setMixOn] = useState(false);
   const [partOn, setPartOn] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
   const [namePrompt, setNamePrompt] = useState(false);
   const [hintPick, setHintPick] = useState(false);
-  const [pickerReturn, setPickerReturn] = useState<"closed" | "roll">("closed");
+  const rowsRef = useRef<SongRow[]>(rowsFromTracks(day.tracks));
+  const activeRowRef = useRef<string | null>(null);
+  const drafts = useRef<Record<string, NoteEvent[]>>({});
   const [volume, setVolume] = useState(0.85);
   const [copied, setCopied] = useState(false);
   const [clipError, setClipError] = useState(false);
@@ -98,6 +118,19 @@ export function PlayView() {
     if (!wasLocked.current && day.locked) setResultOpen(true);
     wasLocked.current = day.locked;
   }, [day.locked]);
+
+  useEffect(() => {
+    setRows((current) => {
+      const live = new Set(day.tracks.map((track) => track.id));
+      const kept = current.filter((row) => row.trackId == null || live.has(row.trackId));
+      const known = new Set(kept.map((row) => row.trackId).filter((id): id is string => id != null));
+      const added = day.tracks.filter((track) => !known.has(track.id)).map((track) => ({ id: track.id, instrument: track.instrument, trackId: track.id }));
+      if (added.length === 0 && kept.length === current.length) return current;
+      const next = [...kept, ...added];
+      rowsRef.current = next;
+      return next;
+    });
+  }, [day.tracks]);
 
   useEffect(() => {
     if (!state.tutorialOpen) return;
@@ -161,13 +194,43 @@ export function PlayView() {
     setDraft(next);
   }
 
-  function commitDraft() {
+  function stashDraft() {
+    const id = activeRowRef.current;
+    if (!id) return;
+    drafts.current[id] = draftRef.current.map((event) => ({ ...event }));
+  }
+
+  function rememberRows(next: SongRow[]) {
+    rowsRef.current = next;
+    setRows(next);
+  }
+
+  function loadRow(row: SongRow) {
+    const stored = drafts.current[row.id];
+    const fromTrack = row.trackId ? (day.tracks.find((track) => track.id === row.trackId)?.events ?? []) : [];
+    const next = (stored ?? fromTrack).map((event) => ({ ...event }));
+    draftRef.current = next;
+    setDraft(next);
+    if (row.instrument) {
+      armedRef.current = row.instrument;
+      setArmed(row.instrument);
+    }
+  }
+
+  function persistActive() {
+    const row = rowsRef.current.find((item) => item.id === activeRowRef.current);
     const events = draftRef.current;
-    if (!events.length || day.locked) return;
-    const instrument = armedRef.current;
-    draftRef.current = [];
-    setDraft([]);
-    dispatch({ type: "save-track", instrument, events });
+    if (!row?.instrument || !events.length || day.locked) return;
+    const instrument = row.instrument;
+    const tagged = events.map((event) => ({ ...event, instrument }));
+    if (row.trackId) {
+      dispatch({ type: "replace-track", id: row.trackId, instrument, events: tagged });
+    } else {
+      const id = `track-${row.id}`;
+      dispatch({ type: "save-track", id, instrument, events: tagged });
+      rememberRows(rowsRef.current.map((item) => (item.id === row.id ? { ...item, trackId: id } : item)));
+    }
+    delete drafts.current[row.id];
   }
 
   function stopMix() {
@@ -176,29 +239,87 @@ export function PlayView() {
     setMixOn(false);
   }
 
+  function addRow() {
+    const row: SongRow = { id: newRowId(), instrument: null, trackId: null };
+    rememberRows([...rowsRef.current, row]);
+  }
+
   function openPicker() {
+    if (!activeRowRef.current) return;
     stopSong();
     stopMix();
-    if (writer !== "pick") setPickerReturn(writer === "roll" ? "roll" : "closed");
+    stashDraft();
     setWriter("pick");
   }
 
-  function closePicker() {
-    setWriter(pickerReturn);
+  function openRow(rowId: string) {
+    stopSong();
+    stopMix();
+    stashDraft();
+    const row = rowsRef.current.find((item) => item.id === rowId);
+    if (!row) return;
+    if (activeRowRef.current === rowId && writer === "pick") {
+      setWriter(row.instrument ? "roll" : "closed");
+      if (row.instrument) loadRow(row);
+      return;
+    }
+    if (activeRowRef.current === rowId && writer === "roll" && row.instrument) {
+      setWriter("closed");
+      return;
+    }
+    activeRowRef.current = rowId;
+    setActiveRow(rowId);
+    if (row.instrument) {
+      loadRow(row);
+      setWriter("roll");
+      return;
+    }
+    const next = (drafts.current[rowId] ?? []).map((event) => ({ ...event }));
+    draftRef.current = next;
+    setDraft(next);
+    setWriter("pick");
   }
 
   function chooseInstrument(id: InstrumentId) {
+    const rowId = activeRowRef.current;
+    const row = rowsRef.current.find((item) => item.id === rowId);
+    if (!row || day.locked) return;
     stopSong();
     stopMix();
-    if (draftRef.current.length && !day.locked) {
-      dispatch({ type: "save-track", instrument: armedRef.current, events: draftRef.current.slice() });
-    }
-    draftRef.current = [];
-    setDraft([]);
+    const previous = row.instrument;
+    const nextKind = instrumentInfo(id).kind;
+    const prevKind = previous ? instrumentInfo(previous).kind : null;
+    let notes = draftRef.current.map((event) => ({ ...event }));
+    if (previous && previous !== id && prevKind !== nextKind) notes = [];
+    notes = notes.map((event) => ({ ...event, instrument: id }));
+    drafts.current[row.id] = notes;
+    draftRef.current = notes.slice();
+    setDraft(notes);
     armedRef.current = id;
     setArmed(id);
-    setPickerReturn("roll");
+    rememberRows(rowsRef.current.map((item) => (item.id === row.id ? { ...item, instrument: id } : item)));
+    if (row.trackId && previous !== id) {
+      dispatch({ type: "replace-track", id: row.trackId, instrument: id, events: notes });
+      delete drafts.current[row.id];
+    }
     setWriter("roll");
+  }
+
+  function removeRow(row: SongRow) {
+    if (day.locked) return;
+    stopPlayback();
+    setPartOn(false);
+    setMixOn(false);
+    if (row.trackId) dispatch({ type: "delete-track", id: row.trackId });
+    delete drafts.current[row.id];
+    rememberRows(rowsRef.current.filter((item) => item.id !== row.id));
+    if (activeRowRef.current === row.id) {
+      activeRowRef.current = null;
+      setActiveRow(null);
+      draftRef.current = [];
+      setDraft([]);
+      setWriter("closed");
+    }
   }
 
   function onListen() {
@@ -243,7 +364,9 @@ export function PlayView() {
     stopPlayback();
     setPartOn(false);
     setMixOn(false);
-    commitDraft();
+    persistActive();
+    draftRef.current = [];
+    setDraft([]);
     setWriter("closed");
   }
 
@@ -253,8 +376,13 @@ export function PlayView() {
     stopSong();
     setPartOn(false);
     setMixOn(false);
+    drafts.current = {};
+    activeRowRef.current = null;
+    setActiveRow(null);
     draftRef.current = [];
     setDraft([]);
+    setWriter("closed");
+    rememberRows([]);
     dispatch({ type: "clear-song" });
   }
 
@@ -271,7 +399,9 @@ export function PlayView() {
     stopSong();
     setPartOn(false);
     setMixOn(false);
-    commitDraft();
+    persistActive();
+    draftRef.current = [];
+    setDraft([]);
     if (!nameReady(state.username)) {
       setNamePrompt(true);
       return;
@@ -280,16 +410,27 @@ export function PlayView() {
   }
 
   function showHintInstrument(id: InstrumentId) {
-    if (armedRef.current !== id) {
-      if (draftRef.current.length && !day.locked) {
-        dispatch({ type: "save-track", instrument: armedRef.current, events: draftRef.current.slice() });
+    stashDraft();
+    let row = rowsRef.current.find((item) => item.instrument === id);
+    if (!row) {
+      const empty = rowsRef.current.find((item) => item.instrument == null);
+      if (empty) {
+        row = { ...empty, instrument: id };
+        rememberRows(rowsRef.current.map((item) => (item.id === empty.id ? row! : item)));
+      } else {
+        row = { id: newRowId(), instrument: id, trackId: null };
+        rememberRows([...rowsRef.current, row]);
       }
-      draftRef.current = [];
-      setDraft([]);
-      armedRef.current = id;
-      setArmed(id);
     }
-    setPickerReturn("roll");
+    activeRowRef.current = row.id;
+    setActiveRow(row.id);
+    armedRef.current = id;
+    setArmed(id);
+    const stored = drafts.current[row.id];
+    const fromTrack = row.trackId ? (day.tracks.find((track) => track.id === row.trackId)?.events ?? []) : [];
+    const next = (stored ?? fromTrack).map((event) => ({ ...event }));
+    draftRef.current = next;
+    setDraft(next);
     setWriter("roll");
   }
 
@@ -330,6 +471,13 @@ export function PlayView() {
   const prettyDate = `${Number(month)}/${Number(dayOfMonth)}/${year}`;
   const songLine = `${song.title} ${song.artist} · ${song.year}`;
   const savedTracks = day.tracks.filter((track) => track.events.length > 0);
+  function labelFor(row: SongRow): string {
+    if (!row.instrument) return "Select instrument";
+    const name = instrumentInfo(row.instrument).name;
+    const same = rows.filter((item) => item.instrument === row.instrument);
+    const number = same.findIndex((item) => item.id === row.id) + 1;
+    return same.length > 1 ? `${name} ${number}` : name;
+  }
   const hintOff = day.mode !== "easy" || day.locked || day.revealedAll;
   const ghosts = ghostsFor(song.notes, armed, day.hintSteps[armed] ?? 0);
 
@@ -434,12 +582,12 @@ export function PlayView() {
       )}
       {!status && <p className="mode-label" data-testid="mode-label" />}
 
-      <div className="inst-row">
-        <button type="button" className="inst-toggle" onClick={() => (writer === "pick" ? closePicker() : openPicker())}>
-          {writer === "roll" ? info.name : "Select instrument"}
-          <Caret up={writer !== "closed"} />
-        </button>
-        {writer === "roll" && (
+      {writer === "roll" && (
+        <div className="inst-row">
+          <button type="button" className="inst-toggle" onClick={openPicker}>
+            {info.name}
+            <Caret up={false} />
+          </button>
           <div className="part-actions">
             <button
               type="button"
@@ -451,8 +599,8 @@ export function PlayView() {
               {partOn ? "Stop" : "Play"}
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {writer === "pick" && (
         <div className="inst-grid" role="listbox" aria-label="Instruments">
@@ -462,10 +610,12 @@ export function PlayView() {
               key={item.id}
               className={day.instrumentsRevealed && present.has(item.id) ? "in-song" : ""}
               aria-label={item.name}
-              aria-pressed={armed === item.id}
+              aria-pressed={rows.find((row) => row.id === activeRow)?.instrument === item.id}
               onClick={() => chooseInstrument(item.id)}
             >
-              <InstrumentGlyph id={item.id} />
+              <span className="pick-emoji" aria-hidden="true">
+                {INSTRUMENT_EMOJI[item.id]}
+              </span>
             </button>
           ))}
         </div>
@@ -512,7 +662,7 @@ export function PlayView() {
         <div className="song-head">
           <h2>Your song</h2>
           <div className="song-actions">
-            <button type="button" className="add-track" aria-label="Add instrument" onClick={openPicker}>
+            <button type="button" className="add-track" aria-label="Add instrument" onClick={addRow}>
               +
             </button>
             <button type="button" className="listen-pill" aria-label={mixOn ? "Stop your song" : "Listen"} onClick={onListen} disabled={savedTracks.length === 0 && !mixOn}>
@@ -520,47 +670,49 @@ export function PlayView() {
             </button>
           </div>
         </div>
-        {savedTracks.length === 0 && <p className="empty-tracks">Add an instrument to get started.</p>}
-        {savedTracks.map((track) => {
-          const item = instrumentInfo(track.instrument);
-          const same = savedTracks.filter((entry) => entry.instrument === track.instrument);
-          const number = same.findIndex((entry) => entry.id === track.id) + 1;
-          const label = same.length > 1 ? `${item.name} ${number}` : item.name;
-          const open = !folded.includes(track.id);
+        {rows.length === 0 && <p className="empty-tracks">Add an instrument to get started.</p>}
+        {rows.map((row) => {
+          const label = labelFor(row);
+          const item = row.instrument ? instrumentInfo(row.instrument) : null;
+          const track = row.trackId ? day.tracks.find((entry) => entry.id === row.trackId) : undefined;
+          const events = track?.events ?? [];
+          const open = activeRow === row.id && writer !== "closed";
           const hit = mixOn
-            ? track.events.findIndex((event) => playhead >= event.time && playhead < event.time + Math.max(event.duration, 0.09))
+            ? events.findIndex((event) => playhead >= event.time && playhead < event.time + Math.max(event.duration, 0.09))
             : -1;
           return (
-            <div className="track" key={track.id}>
+            <div className="track" key={row.id}>
               <div className="track-head">
                 <button
                   type="button"
                   className="track-toggle"
                   aria-expanded={open}
-                  aria-label={`${label} track`}
-                  onClick={() => setFolded((current) => (current.includes(track.id) ? current.filter((id) => id !== track.id) : [...current, track.id]))}
+                  aria-label={row.instrument ? `${label} track` : "Select instrument"}
+                  onClick={() => openRow(row.id)}
                 >
-                  <span key={hit} className={hit >= 0 ? "track-emoji shake" : "track-emoji"} aria-hidden="true">
-                    {INSTRUMENT_EMOJI[item.id]}
-                  </span>
-                  <span className="track-name">{label}</span>
+                  {item && (
+                    <span key={hit} className={hit >= 0 ? "track-emoji shake" : "track-emoji"} aria-hidden="true">
+                      {INSTRUMENT_EMOJI[item.id]}
+                    </span>
+                  )}
+                  <span className="track-name">{row.instrument ? label : "Select instrument"}</span>
                   <Caret up={open} />
                 </button>
                 <button
                   type="button"
                   className="track-trash"
-                  aria-label={`Remove ${label}`}
+                  aria-label={row.instrument ? `Remove ${label}` : "Remove row"}
                   disabled={day.locked}
-                  onClick={() => dispatch({ type: "delete-track", id: track.id })}
+                  onClick={() => removeRow(row)}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
                   </svg>
                 </button>
               </div>
-              {open && (
+              {events.length > 0 && item && (
                 <div className="lane-time">
-                  {track.events.map((event, index) => (
+                  {events.map((event, index) => (
                     <span
                       key={`${event.time}-${index}`}
                       className={item.kind === "drum" ? "lane-block drum" : "lane-block"}
@@ -572,7 +724,7 @@ export function PlayView() {
             </div>
           );
         })}
-        <button type="button" className="clear-song" onClick={onClear} disabled={day.locked || (savedTracks.length === 0 && draft.length === 0)}>
+        <button type="button" className="clear-song" onClick={onClear} disabled={day.locked || (rows.length === 0 && draft.length === 0)}>
           Clear
         </button>
       </section>
@@ -614,7 +766,7 @@ export function PlayView() {
             <p>Everyone hears the same 20 seconds of a real song. You write your own version on the rolls. You get five tries. Your best percentage is kept.</p>
             <h3>Write on the roll</h3>
             <p>Tap the roll to place a note. You hear it. Drag an edge to change the length. Drag a note up or down to change the pitch. On drums, that move switches the drum sound.</p>
-            <p>Play, next to the instrument name, hears only the part you are editing. Save to song keeps that part. The plus starts another track, and the same instrument can be saved again. Listen plays the saved tracks together.</p>
+            <p>Play, next to the instrument name, hears only the part you are editing. Save to song keeps that part. The plus adds an empty row. Choose its instrument, then save. The same instrument can be added again. Listen plays the saved tracks together.</p>
             <div className="example" aria-label={`${EXAMPLE_TITLE} example`}>
               <p>A piano part saved to the song</p>
               <div className="ex-row">{Array.from({ length: 12 }, (_, index) => <span key={index} className="ex-note" />)}</div>
@@ -627,10 +779,14 @@ export function PlayView() {
               type="button"
               disabled={day.locked}
               onClick={() => {
-                dispatch({ type: "load-example" });
+                drafts.current = {};
+                activeRowRef.current = null;
+                setActiveRow(null);
                 draftRef.current = [];
                 setDraft([]);
                 setWriter("closed");
+                rememberRows([]);
+                dispatch({ type: "load-example" });
                 dispatch({ type: "set-tutorial", open: false });
               }}
             >
