@@ -14,7 +14,9 @@ import { beatSeconds, songForDate, windowPeaks } from "./daily";
 import { EXAMPLE_TITLE } from "./example";
 import { calmLine } from "./score";
 import { bestAttempt, dockTotal, ghostsFor, officialScore, songInstruments, stepsToFill } from "./progress";
+import { sketchCopy } from "./keys";
 import { shareHash } from "./share";
+import { SketchReveal } from "./SketchReveal";
 import { nameReady, useGame } from "./store";
 import {
   INSTRUMENT_EMOJI,
@@ -77,6 +79,7 @@ export function PlayView() {
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [mixOn, setMixOn] = useState(false);
   const [partOn, setPartOn] = useState(false);
+  const [sketchOn, setSketchOn] = useState(false);
   const [confirmClear, setConfirmClear] = useState<null | "playground" | "song">(null);
   const [resultOpen, setResultOpen] = useState(false);
   const [namePrompt, setNamePrompt] = useState(false);
@@ -179,6 +182,7 @@ export function PlayView() {
         if (!alive.current) return;
         setMixOn(false);
         setPartOn(false);
+        setSketchOn(false);
         rollPlayheadRef.current = 20;
         setRollPlayhead(20);
       },
@@ -188,6 +192,7 @@ export function PlayView() {
   }
 
   function onPlay() {
+    setSketchOn(false);
     if (mixOn || partOn) {
       stopPlayback();
       setMixOn(false);
@@ -419,6 +424,7 @@ export function PlayView() {
   }
 
   function onListen() {
+    setSketchOn(false);
     stopSong();
     if (partOn) {
       stopPlayback();
@@ -437,7 +443,27 @@ export function PlayView() {
     void resumeAudio().then(() => begin(0, events, false));
   }
 
+  function onPlaySketch() {
+    stopSong();
+    if (mixOn || partOn) {
+      stopPlayback();
+      setMixOn(false);
+      setPartOn(false);
+    }
+    if (sketchOn) {
+      stopPlayback();
+      setSketchOn(false);
+      return;
+    }
+    setSketchOn(true);
+    rollPlayheadRef.current = 0;
+    setRollPlayhead(0);
+    primeAudio();
+    void resumeAudio().then(() => begin(0, song.notes, false));
+  }
+
   function onPlayPart() {
+    setSketchOn(false);
     stopSong();
     if (mixOn) {
       stopPlayback();
@@ -702,7 +728,7 @@ export function PlayView() {
           disabled={day.locked}
           step={beatSeconds(song.bpm) / 4}
           defaultDuration={beatSeconds(song.bpm)}
-          follow={songPlaying || mixOn || partOn}
+          follow={songPlaying || mixOn || partOn || sketchOn}
           onChange={replaceDraft}
           onPreview={(note) => {
             primeAudio();
@@ -984,6 +1010,14 @@ export function PlayView() {
         )}
       </div>
 
+      {day.locked && (
+        <SketchReveal notes={song.notes} authored={song.authored} bpm={song.bpm} playhead={rollPlayhead} playing={sketchOn} onPlay={onPlaySketch} />
+      )}
+
+      <p className="author-link">
+        <a href="#author">Author a scoring key</a>
+      </p>
+
       {state.tutorialOpen && (
         <div className="overlay">
           <div className="modal" role="dialog" aria-label="How to play">
@@ -1107,8 +1141,14 @@ export function PlayView() {
             <button type="button" onClick={() => { stopSong(); void resumeAudio().then(() => begin(0, best.events, false)); }}>
               Hear your sketch
             </button>
-            <button type="button" onClick={() => { stopSong(); void resumeAudio().then(() => begin(0, song.notes, false)); }}>
-              Hear the hidden arrangement
+            <button
+              type="button"
+              onClick={() => {
+                setResultOpen(false);
+                onPlaySketch();
+              }}
+            >
+              {sketchCopy(song.authored).play}
             </button>
             <button
               type="button"

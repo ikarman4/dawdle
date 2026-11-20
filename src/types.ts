@@ -41,6 +41,8 @@ export interface Song {
   bpm: number;
   key: string;
   notes: NoteEvent[];
+  /** True when src/keys has a committed scoring key for this video. */
+  authored: boolean;
 }
 
 export interface Track {

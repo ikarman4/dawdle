@@ -499,6 +499,18 @@ button.daw-row.black { background: rgba(0, 0, 0, 0.045); }
   color: var(--ink);
 }
 
+.sketch { display: flex; flex-direction: column; gap: 8px; }
+.sketch h2 { margin: 0; font-size: 16px; }
+.sketch p { margin: 0; }
+.sketch .daw-scroll { max-height: 180px; }
+.author { display: flex; flex-direction: column; gap: 10px; }
+.author h1 { margin: 0; font-size: 22px; }
+.author-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
+.author-list button { width: 100%; text-align: left; display: flex; gap: 8px; align-items: baseline; }
+.author-by { color: var(--muted); font-size: 13px; }
+.author-link { margin: 0; text-align: center; font-size: 13px; }
+.author-link a { color: var(--ink); }
+
 .nav {
   display: flex;
   gap: 8px;

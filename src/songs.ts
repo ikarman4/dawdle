@@ -1,6 +1,7 @@
 import { buildArrangement, keyName } from "./arrangement";
 import { CATALOG, type CatalogEntry } from "./catalog";
 import { bpmForId } from "./hash";
+import { authoredNotes, hasAuthoredKey } from "./keys";
 import type { NoteEvent, Song } from "./types";
 
 const notesFor = new Map<string, NoteEvent[]>();
@@ -8,7 +9,7 @@ const notesFor = new Map<string, NoteEvent[]>();
 function notesOf(id: string, bpm: number): NoteEvent[] {
   const cached = notesFor.get(id);
   if (cached) return cached;
-  const notes = buildArrangement(id, bpm);
+  const notes = authoredNotes(id) ?? buildArrangement(id, bpm);
   notesFor.set(id, notes);
   return notes;
 }
@@ -24,11 +25,18 @@ function toSong(entry: CatalogEntry): Song {
     bpm,
     key: keyName(entry.id),
     notes: [] as NoteEvent[],
+    authored: false,
   };
   Object.defineProperty(song, "notes", {
     enumerable: true,
     get() {
       return notesOf(entry.id, bpm);
+    },
+  });
+  Object.defineProperty(song, "authored", {
+    enumerable: true,
+    get() {
+      return hasAuthoredKey(entry.id);
     },
   });
   return song;

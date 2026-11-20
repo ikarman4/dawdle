@@ -495,6 +495,7 @@ export function NoteRoll({
   onPreview,
   onKeyDown,
   onKeyUp,
+  testId = "instrument",
 }: {
   instrument: InstrumentId;
   rows: RollRow[];
@@ -509,6 +510,7 @@ export function NoteRoll({
   onPreview: (note: NoteEvent) => void;
   onKeyDown: (row: RollRow) => void;
   onKeyUp: (row: RollRow) => void;
+  testId?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -728,7 +730,7 @@ export function NoteRoll({
   const lines = Math.floor(20 / Math.max(step, 0.05));
 
   return (
-    <div className="daw-scroll" data-testid="instrument" ref={scrollRef} role="region" aria-label="Roll for 20 seconds" tabIndex={0}>
+    <div className="daw-scroll" data-testid={testId} ref={scrollRef} role="region" aria-label="Roll for 20 seconds" tabIndex={0}>
       <div
         className="daw-grid"
         ref={gridRef}
