@@ -89,10 +89,31 @@ test("desktop studio path", async ({ page }) => {
   expect(playgroundBox).toBeTruthy();
   await page.mouse.click(playgroundBox!.x + 140, playgroundBox!.y + 36);
   await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  const playBox = await page.getByRole("button", { name: "Play this instrument" }).boundingBox();
+  const clearBox = await page.getByRole("button", { name: "Clear playground" }).boundingBox();
+  expect(playBox && clearBox && clearBox.x).toBeGreaterThan((playBox?.x ?? 0) + (playBox?.width ?? 0) - 2);
+  await page.getByRole("button", { name: "Clear playground" }).click();
+  await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  await page.getByRole("button", { name: "Confirm clear playground" }).click();
+  await expect(page.getByTestId("roll-note")).toHaveCount(0);
+  const again = await page.locator(".playground").getByTestId("instrument").boundingBox();
+  expect(again).toBeTruthy();
+  await page.mouse.click(again!.x + 140, again!.y + 36);
+  await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  const waveBefore = await page.getByTestId("waveform").getAttribute("data-seconds");
+  await page.getByRole("button", { name: "Play this instrument" }).click();
+  await expect(page.getByTestId("listen")).toHaveAttribute("data-part", "on");
+  await expect(page.getByTestId("listen")).toHaveAttribute("data-song", "off");
+  await expect.poll(async () => Number(await page.getByTestId("roll-playhead").getAttribute("data-seconds"))).toBeGreaterThan(0.05);
+  await expect(page.getByTestId("waveform")).toHaveAttribute("data-seconds", waveBefore);
+  await page.getByRole("button", { name: "Stop this instrument" }).click();
   const unsaved = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
   await page.getByRole("button", { name: "Listen" }).click();
   await expect(page.getByRole("button", { name: "Stop your song" })).toBeVisible();
+  await expect(page.getByTestId("listen")).toHaveAttribute("data-song", "off");
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(unsaved);
+  await expect.poll(async () => Number(await page.getByTestId("roll-playhead").getAttribute("data-seconds"))).toBeGreaterThan(0.05);
+  await expect(page.getByTestId("waveform")).toHaveAttribute("data-seconds", waveBefore);
   await page.getByRole("button", { name: "Stop your song" }).click();
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();
@@ -243,13 +264,16 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   expect(Number(await page.getByTestId("roll-note").getAttribute("data-pitch"))).toBe(heldPitch);
 
   const heard = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  const waveBefore = await page.getByTestId("waveform").getAttribute("data-seconds");
   await roll.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
   expect(await roll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(200);
   await page.getByRole("button", { name: "Play this instrument" }).click();
   await expect(page.getByTestId("listen")).toHaveAttribute("data-part", "on");
+  await expect(page.getByTestId("listen")).toHaveAttribute("data-song", "off");
   await expect.poll(async () => roll.evaluate((el) => el.scrollLeft)).toBeLessThan(80);
+  await expect(page.getByTestId("waveform")).toHaveAttribute("data-seconds", waveBefore);
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(heard);
   await page.getByRole("button", { name: "Stop this instrument" }).click();
   await roll.evaluate((el) => {
@@ -258,9 +282,13 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await expect.poll(async () => roll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(400);
 
   const unsaved = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  const waveStill = await page.getByTestId("waveform").getAttribute("data-seconds");
   await page.getByRole("button", { name: "Listen" }).click();
   await expect(page.getByRole("button", { name: "Stop your song" })).toBeVisible();
+  await expect(page.getByTestId("listen")).toHaveAttribute("data-song", "off");
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(unsaved);
+  await expect.poll(async () => Number(await page.getByTestId("roll-playhead").getAttribute("data-seconds"))).toBeGreaterThan(0.05);
+  await expect(page.getByTestId("waveform")).toHaveAttribute("data-seconds", waveStill);
   await page.getByRole("button", { name: "Stop your song" }).click();
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();
@@ -321,7 +349,9 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await page.getByRole("button", { name: "Remove Drum kit" }).click();
   await expect(page.getByRole("button", { name: "Drum kit track" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Piano 1 track" })).toBeVisible();
-  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("button", { name: "Clear your song" }).click();
+  await expect(page.getByRole("button", { name: "Piano 1 track" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm clear your song" }).click();
   await expect(page.getByText("Add an instrument to get started.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Piano 1 track" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Piano 2 track" })).toHaveCount(0);

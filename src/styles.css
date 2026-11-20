@@ -175,6 +175,14 @@ main {
 }
 .rec.is-on { color: #c62818; font-weight: 700; }
 .part-actions { display: flex; align-items: center; gap: 2px; }
+.clear-part {
+  background: transparent;
+  border: 0;
+  color: #666;
+  font-weight: 650;
+  padding: 4px 8px;
+}
+.clear-part.is-confirm, .clear-song.is-confirm { color: #c62818; }
 .save-song {
   width: 100%;
   margin-top: 8px;

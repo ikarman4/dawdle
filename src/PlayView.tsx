@@ -67,6 +67,7 @@ export function PlayView() {
   const song = songForDate(state.today);
   const clip = useRef<ClipControl>(null);
   const [playhead, setPlayhead] = useState(0);
+  const [rollPlayhead, setRollPlayhead] = useState(0);
   const [songPlaying, setSongPlaying] = useState(false);
   const [armed, setArmed] = useState<InstrumentId>("piano");
   const [draft, setDraft] = useState<NoteEvent[]>([]);
@@ -76,6 +77,7 @@ export function PlayView() {
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [mixOn, setMixOn] = useState(false);
   const [partOn, setPartOn] = useState(false);
+  const [confirmClear, setConfirmClear] = useState<null | "playground" | "song">(null);
   const [resultOpen, setResultOpen] = useState(false);
   const [namePrompt, setNamePrompt] = useState(false);
   const [hintPick, setHintPick] = useState(false);
@@ -94,6 +96,7 @@ export function PlayView() {
   const [copied, setCopied] = useState(false);
   const [clipError, setClipError] = useState(false);
   const playheadRef = useRef(0);
+  const rollPlayheadRef = useRef(0);
   const alive = useRef(true);
   const songPlayingRef = useRef(false);
   const draftRef = useRef<NoteEvent[]>([]);
@@ -114,6 +117,10 @@ export function PlayView() {
   useEffect(() => {
     playheadRef.current = playhead;
   }, [playhead]);
+
+  useEffect(() => {
+    rollPlayheadRef.current = rollPlayhead;
+  }, [rollPlayhead]);
 
   useEffect(() => {
     songPlayingRef.current = songPlaying;
@@ -165,15 +172,15 @@ export function PlayView() {
       metronome: withClick,
       onTick: (time) => {
         if (!alive.current) return;
-        playheadRef.current = time;
-        setPlayhead(time);
+        rollPlayheadRef.current = time;
+        setRollPlayhead(time);
       },
       onEnd: () => {
         if (!alive.current) return;
         setMixOn(false);
         setPartOn(false);
-        playheadRef.current = 20;
-        setPlayhead(20);
+        rollPlayheadRef.current = 20;
+        setRollPlayhead(20);
       },
       onBeat: () => undefined,
       rate: speedRef.current,
@@ -193,6 +200,8 @@ export function PlayView() {
     const from = playhead >= 19.9 ? 0 : playhead;
     playheadRef.current = from;
     setPlayhead(from);
+    rollPlayheadRef.current = from;
+    setRollPlayhead(from);
     songPlayingRef.current = true;
     setSongPlaying(true);
     void resumeAudio();
@@ -205,8 +214,8 @@ export function PlayView() {
     speedRef.current = next;
     setSpeed(next);
     clip.current?.setPlaybackRate(next);
-    if (mixOn) begin(playheadRef.current, eventsForListen(), false);
-    else if (partOn) begin(playheadRef.current, draftRef.current, false);
+    if (mixOn) begin(rollPlayheadRef.current, eventsForListen(), false);
+    else if (partOn) begin(rollPlayheadRef.current, draftRef.current, false);
   }
 
   function replaceDraft(next: NoteEvent[]) {
@@ -422,6 +431,8 @@ export function PlayView() {
     }
     const events = eventsForListen();
     setMixOn(true);
+    rollPlayheadRef.current = 0;
+    setRollPlayhead(0);
     primeAudio();
     void resumeAudio().then(() => begin(0, events, false));
   }
@@ -440,8 +451,8 @@ export function PlayView() {
     const events = draftRef.current;
     if (!events.length) return;
     setPartOn(true);
-    setPlayhead(0);
-    playheadRef.current = 0;
+    setRollPlayhead(0);
+    rollPlayheadRef.current = 0;
     primeAudio();
     void resumeAudio().then(() => begin(0, events, false));
   }
@@ -485,7 +496,17 @@ export function PlayView() {
     persistActive();
   }
 
-  function onClear() {
+  function clearPlayground() {
+    stopPlayback();
+    setPartOn(false);
+    setMixOn(false);
+    playDraft.current = [];
+    if (placeRef.current !== "playground") return;
+    draftRef.current = [];
+    setDraft([]);
+  }
+
+  function clearSong() {
     if (day.locked) return;
     stopPlayback();
     stopSong();
@@ -504,11 +525,25 @@ export function PlayView() {
     dispatch({ type: "clear-song" });
   }
 
+  function askClear(which: "playground" | "song") {
+    if (day.locked) return;
+    if (confirmClear !== which) {
+      setConfirmClear(which);
+      return;
+    }
+    setConfirmClear(null);
+    if (which === "playground") clearPlayground();
+    else clearSong();
+  }
+
   function onScrub(time: number, phase: "down" | "move" | "up") {
     playheadRef.current = time;
     setPlayhead(time);
-    if (songPlaying && phase !== "move") clip.current?.seek(time);
-    if (songPlaying && phase === "move") clip.current?.seek(time);
+    if (!songPlaying) return;
+    rollPlayheadRef.current = time;
+    setRollPlayhead(time);
+    if (phase !== "move") clip.current?.seek(time);
+    if (phase === "move") clip.current?.seek(time);
   }
 
   function onSubmit() {
@@ -663,7 +698,7 @@ export function PlayView() {
           rows={rowsFor(armed)}
           notes={draft}
           ghosts={ghosts}
-          playhead={playhead}
+          playhead={rollPlayhead}
           disabled={day.locked}
           step={beatSeconds(song.bpm) / 4}
           defaultDuration={beatSeconds(song.bpm)}
@@ -707,7 +742,7 @@ export function PlayView() {
   );
 
   return (
-    <div className="studio" data-mode="listen" data-part={partOn ? "on" : "off"} data-testid="listen">
+    <div className="studio" data-mode="listen" data-part={partOn ? "on" : "off"} data-song={songPlaying ? "on" : "off"} data-testid="listen">
       <header className="top">
         <div className="brand">
           <h1>DAWdle</h1>
@@ -749,6 +784,8 @@ export function PlayView() {
           if (!songPlayingRef.current) return;
           playheadRef.current = seconds;
           setPlayhead(seconds);
+          rollPlayheadRef.current = seconds;
+          setRollPlayhead(seconds);
         }}
         onEnded={() => {
           songPlayingRef.current = false;
@@ -814,6 +851,15 @@ export function PlayView() {
             <div className="part-actions">
               <span className="track-name">{info.name}</span>
               {playControl}
+              <button
+                type="button"
+                className={confirmClear === "playground" ? "clear-part is-confirm" : "clear-part"}
+                aria-label={confirmClear === "playground" ? "Confirm clear playground" : "Clear playground"}
+                onClick={() => askClear("playground")}
+                disabled={day.locked || draft.length === 0}
+              >
+                {confirmClear === "playground" ? "Confirm" : "Clear"}
+              </button>
             </div>
           )}
         </div>
@@ -841,7 +887,7 @@ export function PlayView() {
           const events = track?.events ?? [];
           const open = place === "row" && activeRow === row.id && writer !== "closed";
           const hit = mixOn
-            ? events.findIndex((event) => playhead >= event.time && playhead < event.time + Math.max(event.duration, 0.09))
+            ? events.findIndex((event) => rollPlayhead >= event.time && rollPlayhead < event.time + Math.max(event.duration, 0.09))
             : -1;
           return (
             <div className={rowFlash[row.id] ? `track flash-${rowFlash[row.id]}` : "track"} key={row.id}>
@@ -897,8 +943,14 @@ export function PlayView() {
             </div>
           );
         })}
-        <button type="button" className="clear-song" onClick={onClear} disabled={day.locked || (rows.length === 0 && draft.length === 0)}>
-          Clear
+        <button
+          type="button"
+          className={confirmClear === "song" ? "clear-song is-confirm" : "clear-song"}
+          aria-label={confirmClear === "song" ? "Confirm clear your song" : "Clear your song"}
+          onClick={() => askClear("song")}
+          disabled={day.locked || (rows.length === 0 && draft.length === 0)}
+        >
+          {confirmClear === "song" ? "Confirm" : "Clear"}
         </button>
       </section>
 

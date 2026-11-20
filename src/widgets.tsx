@@ -801,7 +801,7 @@ export function NoteRoll({
               </div>
             );
           })}
-          <div className="playhead" style={{ left: playhead * ROLL_PX }} />
+          <div className="playhead" data-testid="roll-playhead" data-seconds={playhead.toFixed(3)} style={{ left: playhead * ROLL_PX }} />
         </div>
       </div>
     </div>
