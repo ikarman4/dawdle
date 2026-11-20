@@ -55,6 +55,8 @@ type Action =
   | { type: "mute"; instrument: InstrumentId }
   | { type: "solo"; instrument: InstrumentId }
   | { type: "clear"; instrument: InstrumentId }
+  | { type: "clear-song" }
+  | { type: "delete-track"; id: string }
   | { type: "load-example" }
   | { type: "submit" }
   | { type: "reveal-instruments" }
@@ -218,6 +220,12 @@ function reducer(state: GameState, action: Action): GameState {
     case "clear":
       if (current.locked) return state;
       return commit(withTrack(current, action.instrument, (track) => ({ ...track, events: [], technique: undefined })));
+    case "clear-song":
+      if (current.locked) return state;
+      return commit({ ...current, tracks: [] });
+    case "delete-track":
+      if (current.locked) return state;
+      return commit({ ...current, tracks: current.tracks.filter((track) => track.id !== action.id) });
     case "load-example":
       if (current.locked) return state;
       return commit({ ...current, tracks: exampleTracks() });

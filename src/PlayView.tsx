@@ -244,6 +244,17 @@ export function PlayView() {
     setWriter("closed");
   }
 
+  function onClear() {
+    if (day.locked) return;
+    stopPlayback();
+    stopSong();
+    setPartOn(false);
+    setMixOn(false);
+    draftRef.current = [];
+    setDraft([]);
+    dispatch({ type: "clear-song" });
+  }
+
   function onScrub(time: number, phase: "down" | "move" | "up") {
     playheadRef.current = time;
     setPlayhead(time);
@@ -514,19 +525,32 @@ export function PlayView() {
             : -1;
           return (
             <div className="track" key={track.id}>
-              <button
-                type="button"
-                className="track-toggle"
-                aria-expanded={open}
-                aria-label={`${label} track`}
-                onClick={() => setFolded((current) => (current.includes(track.id) ? current.filter((id) => id !== track.id) : [...current, track.id]))}
-              >
-                <span key={hit} className={hit >= 0 ? "track-emoji shake" : "track-emoji"} aria-hidden="true">
-                  {INSTRUMENT_EMOJI[item.id]}
-                </span>
-                <span className="track-name">{label}</span>
-                <Caret up={open} />
-              </button>
+              <div className="track-head">
+                <button
+                  type="button"
+                  className="track-toggle"
+                  aria-expanded={open}
+                  aria-label={`${label} track`}
+                  onClick={() => setFolded((current) => (current.includes(track.id) ? current.filter((id) => id !== track.id) : [...current, track.id]))}
+                >
+                  <span key={hit} className={hit >= 0 ? "track-emoji shake" : "track-emoji"} aria-hidden="true">
+                    {INSTRUMENT_EMOJI[item.id]}
+                  </span>
+                  <span className="track-name">{label}</span>
+                  <Caret up={open} />
+                </button>
+                <button
+                  type="button"
+                  className="track-trash"
+                  aria-label={`Remove ${label}`}
+                  disabled={day.locked}
+                  onClick={() => dispatch({ type: "delete-track", id: track.id })}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
               {open && (
                 <div className="lane-time">
                   {track.events.map((event, index) => (
@@ -541,9 +565,12 @@ export function PlayView() {
             </div>
           );
         })}
+        <button type="button" className="clear-song" onClick={onClear} disabled={day.locked || (savedTracks.length === 0 && draft.length === 0)}>
+          Clear
+        </button>
       </section>
 
-      <div className="tries" aria-label="Tries">
+      {day.attempts.length > 0 && <div className="tries" aria-label="Tries">
         {Array.from({ length: 5 }, (_, index) => {
           const attempt = day.attempts[index];
           return (
@@ -555,7 +582,7 @@ export function PlayView() {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       <div className="submit-wrap">
         <button type="button" className="submit-pill" onClick={onSubmit} disabled={day.locked || day.attempts.length >= 5}>

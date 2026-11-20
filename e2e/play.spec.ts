@@ -42,6 +42,7 @@ test("desktop studio path", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "How to play" })).toBeVisible();
   await page.getByRole("button", { name: "Close instructions" }).click();
   await expect(page.getByText("Add an instrument to get started.")).toBeVisible();
+  await expect(page.getByLabel("Tries")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Record", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Select instrument" }).click();
   await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
@@ -51,8 +52,15 @@ test("desktop studio path", async ({ page }) => {
   const roll = page.getByTestId("instrument");
   const box = await roll.boundingBox();
   expect(box).toBeTruthy();
+  const cursor = await roll.locator("button.daw-row").first().evaluate((el) => getComputedStyle(el).cursor);
+  expect(cursor).toBe("cell");
   await page.mouse.click(box!.x + 160, box!.y + 24);
-  await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  await page.mouse.click(box!.x + box!.width - 18, box!.y + 96);
+  const placed = page.getByTestId("roll-note");
+  await expect(placed).toHaveCount(2);
+  const times = await placed.evaluateAll((els) => els.map((el) => Number(el.getAttribute("data-time"))));
+  expect(Math.min(...times)).toBeGreaterThan(0.2);
+  expect(Math.max(...times) - Math.min(...times)).toBeGreaterThan(1.5);
   await page.getByRole("button", { name: "Add instrument" }).click();
   await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
   await expect(page.getByTestId("instrument")).toHaveCount(0);
@@ -83,10 +91,27 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
   expect(overflow).toBe(true);
 
-  const before = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
   const scroller = await roll.boundingBox();
   expect(scroller).toBeTruthy();
-  await page.mouse.click(scroller!.x + 130, scroller!.y + 10);
+  const glideBefore = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  await page.mouse.move(scroller!.x + 130, scroller!.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(scroller!.x + 130, scroller!.y + 108, { steps: 10 });
+  await page.mouse.up();
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard)).toBeGreaterThan(glideBefore + 2);
+  await expect(page.getByTestId("roll-note")).toHaveCount(0);
+  const keyBefore = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  await page.mouse.move(scroller!.x + 18, scroller!.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(scroller!.x + 18, scroller!.y + 90, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard)).toBeGreaterThan(keyBefore + 1);
+  await expect(page.getByTestId("roll-note")).toHaveCount(0);
+
+  const spot = await roll.boundingBox();
+  expect(spot).toBeTruthy();
+  const before = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  await page.mouse.click(spot!.x + 130, spot!.y + 30);
   const note = page.getByTestId("roll-note");
   await expect(note).toHaveCount(1);
   expect(Number(await note.getAttribute("data-time"))).toBeGreaterThan(0.2);
@@ -172,12 +197,37 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await page.getByRole("button", { name: "Listen" }).click();
   await expect(page.getByRole("button", { name: "Stop your song" })).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(mixBefore);
+  await page.getByRole("button", { name: "Stop your song" }).click();
+  await page.getByRole("button", { name: "Remove Drum kit" }).click();
+  await expect(page.getByRole("button", { name: "Drum kit track" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Piano 1 track" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByText("Add an instrument to get started.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Piano 1 track" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Piano 2 track" })).toHaveCount(0);
 });
 
-test("mobile studio path", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("mobile studio path", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, baseURL: "http://127.0.0.1:4173" });
+  const page = await context.newPage();
   await openToday(page);
   await expectStudio(page);
+  await expect(page.getByLabel("Tries")).toHaveCount(0);
+  await page.getByRole("button", { name: "Select instrument" }).click();
+  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  const roll = page.getByTestId("instrument");
+  const box = await roll.boundingBox();
+  expect(box).toBeTruthy();
+  await page.touchscreen.tap(box!.x + 150, box!.y + 30);
+  const again = await roll.boundingBox();
+  expect(again).toBeTruthy();
+  await page.touchscreen.tap(again!.x + again!.width - 16, again!.y + 80);
+  const notes = page.getByTestId("roll-note");
+  await expect(notes).toHaveCount(2);
+  const times = await notes.evaluateAll((els) => els.map((el) => Number(el.getAttribute("data-time"))));
+  expect(Math.min(...times)).toBeGreaterThan(0.2);
+  expect(Math.max(...times) - Math.min(...times)).toBeGreaterThan(1);
   await page.goto("/dawdle/#leaderboard");
   await expect(page.getByTestId("board")).toContainText("Finish all five tries");
+  await context.close();
 });

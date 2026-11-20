@@ -610,15 +610,21 @@ export function NoteRoll({
   onKeyUp: (row: RollRow) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef(notes);
-  const tap = useRef<{ x: number; y: number } | null>(null);
+  const gesture = useRef<{ x: number; y: number; dragged: boolean; fromKey: boolean } | null>(null);
+  const placed = useRef(false);
+  const sounding = useRef<RollRow | null>(null);
+  const holdTimer = useRef(0);
   const [selected, setSelected] = useState<number | null>(null);
   const rowH = rows.some((row) => row.drum) ? 36 : 18;
 
   useEffect(() => {
     notesRef.current = notes;
   }, [notes]);
+
+  useEffect(() => () => window.clearTimeout(holdTimer.current), []);
 
   useEffect(() => {
     if (!follow) return;
@@ -653,12 +659,98 @@ export function NoteRoll({
     onPreview(note);
   }
 
-  function placeAt(clientX: number, clientY: number) {
-    const sheet = sheetRef.current;
-    if (!sheet || disabled) return;
-    const rowIndex = Math.min(rows.length - 1, Math.max(0, Math.floor((clientY - sheet.getBoundingClientRect().top) / rowH)));
-    const row = rows[rowIndex];
-    if (row) place(row, clientX);
+  function rowFromClientY(clientY: number): RollRow | null {
+    const grid = gridRef.current;
+    if (!grid) return null;
+    const index = Math.floor((clientY - grid.getBoundingClientRect().top) / rowH);
+    if (index < 0 || index >= rows.length) return null;
+    return rows[index];
+  }
+
+  function sound(row: RollRow | null) {
+    if (!row) {
+      silence();
+      return;
+    }
+    if (sounding.current?.key === row.key) return;
+    if (sounding.current) onKeyUp(sounding.current);
+    sounding.current = row;
+    onKeyDown(row);
+  }
+
+  function silence() {
+    if (!sounding.current) return;
+    onKeyUp(sounding.current);
+    sounding.current = null;
+  }
+
+  function placeRow(row: RollRow, clientX: number) {
+    if (placed.current || disabled) return;
+    placed.current = true;
+    place(row, clientX);
+  }
+
+  function onGridPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (disabled || event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-note], .daw-edge")) return;
+    const fromKey = Boolean(target.closest(".daw-key"));
+    const onRow = Boolean(target.closest(".daw-row"));
+    if (!fromKey && !onRow) return;
+    event.preventDefault();
+    window.clearTimeout(holdTimer.current);
+    placed.current = false;
+    gesture.current = { x: event.clientX, y: event.clientY, dragged: false, fromKey };
+    if (fromKey) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      sound(rowFromClientY(event.clientY));
+      return;
+    }
+    holdTimer.current = window.setTimeout(() => {
+      const current = gesture.current;
+      if (!current || current.dragged) return;
+      sound(rowFromClientY(current.y));
+    }, 80);
+  }
+
+  function onGridPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const current = gesture.current;
+    if (!current) return;
+    const dx = event.clientX - current.x;
+    const dy = event.clientY - current.y;
+    if (!current.dragged && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+      current.dragged = true;
+      window.clearTimeout(holdTimer.current);
+      silence();
+      return;
+    }
+    if (!current.dragged && Math.abs(dy) < 6) return;
+    current.dragged = true;
+    window.clearTimeout(holdTimer.current);
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId);
+    sound(rowFromClientY(event.clientY));
+  }
+
+  function onGridPointerUp() {
+    window.clearTimeout(holdTimer.current);
+    silence();
+    const current = gesture.current;
+    if (!current || current.dragged || current.fromKey) return;
+    const row = rowFromClientY(current.y);
+    if (row) placeRow(row, current.x);
+  }
+
+  function onSheetClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (disabled) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-note], .daw-edge, .daw-key")) return;
+    if (gesture.current?.dragged) {
+      gesture.current = null;
+      return;
+    }
+    gesture.current = null;
+    const row = rowFromClientY(event.clientY);
+    if (row) placeRow(row, event.clientX);
   }
 
   function onNoteDown(event: React.PointerEvent<HTMLDivElement>, index: number) {
@@ -729,29 +821,25 @@ export function NoteRoll({
 
   return (
     <div className="daw-scroll" data-testid="instrument" ref={scrollRef} role="region" aria-label="Roll for 20 seconds" tabIndex={0}>
-      <div className="daw-grid" style={{ width: ROLL_KEY + 20 * ROLL_PX, ["--row-h" as string]: `${rowH}px` }}>
+      <div
+        className="daw-grid"
+        ref={gridRef}
+        style={{ width: ROLL_KEY + 20 * ROLL_PX, ["--row-h" as string]: `${rowH}px` }}
+        onPointerDown={onGridPointerDown}
+        onPointerMove={onGridPointerMove}
+        onPointerUp={onGridPointerUp}
+        onPointerCancel={onGridPointerUp}
+      >
         <div className="daw-keys">
           {rows.map((row) => (
-            <button
-              type="button"
-              key={row.key}
-              className={row.black ? "daw-key black" : "daw-key"}
-              aria-label={row.label}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                onKeyDown(row);
-              }}
-              onPointerUp={() => onKeyUp(row)}
-              onPointerCancel={() => onKeyUp(row)}
-            >
+            <button type="button" key={row.key} className={row.black ? "daw-key black" : "daw-key"} aria-label={row.label}>
               {row.short}
             </button>
           ))}
         </div>
-        <div className="daw-sheet" ref={sheetRef}>
+        <div className="daw-sheet" ref={sheetRef} onClick={onSheetClick}>
           {rows.map((row) => (
-            <div key={row.key} className={row.black ? "daw-row black" : "daw-row"} data-midi={row.midi ?? ""} data-drum={row.drum ?? ""} />
+            <button type="button" key={row.key} className={row.black ? "daw-row black" : "daw-row"} data-midi={row.midi ?? ""} data-drum={row.drum ?? ""} tabIndex={-1} />
           ))}
           {ghosts
             .filter((ghost) => ghost.kind === "beat")
@@ -765,20 +853,6 @@ export function NoteRoll({
               style={{ left: index * step * ROLL_PX }}
             />
           ))}
-          <div
-            className="daw-hit"
-            onPointerDown={(event) => {
-              if (disabled || event.target !== event.currentTarget) return;
-              tap.current = { x: event.clientX, y: event.clientY };
-            }}
-            onPointerUp={(event) => {
-              const start = tap.current;
-              tap.current = null;
-              if (!start || disabled) return;
-              if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) return;
-              placeAt(event.clientX, event.clientY);
-            }}
-          />
           {ghosts
             .filter((ghost) => ghost.kind === "note")
             .map((ghost, index) => {
