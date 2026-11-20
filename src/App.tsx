@@ -28,14 +28,14 @@ function Shell() {
         {view === "leaderboard" && <BoardView />}
         {view === "you" && <YouView />}
       </main>
-      <nav className="nav" aria-label="Primary">
-        <a href="#play" aria-current={view === "play" ? "page" : undefined}>
-          Play
-        </a>
-        <a href="#you" aria-current={view === "you" ? "page" : undefined}>
-          You
-        </a>
-      </nav>
+      {view !== "play" && (
+        <nav className="nav" aria-label="Primary">
+          <a href="#play">Play</a>
+          <a href="#you" aria-current={view === "you" ? "page" : undefined}>
+            You
+          </a>
+        </nav>
+      )}
     </div>
   );
 }

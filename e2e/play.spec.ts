@@ -26,11 +26,10 @@ async function openToday(page: Page) {
 async function expectStudio(page: Page) {
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
   await expectInView(page, page.getByRole("button", { name: "Play", exact: true }));
-  await expectInView(page, page.getByRole("button", { name: "Record", exact: true }));
-  await expectInView(page, page.getByRole("button", { name: /Instrument,/ }));
-  await expectInView(page, page.getByRole("button", { name: "Submit 1 of 5" }));
+  await expectInView(page, page.getByRole("button", { name: "Select instrument" }));
+  await expectInView(page, page.getByRole("button", { name: "Submit", exact: true }));
   await expectInView(page, page.getByLabel("Volume for the song and your instruments"));
-  await expectInView(page, page.getByTestId("instrument"));
+  await expect(page.getByRole("heading", { name: "Your song" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
   expect(overflow).toBe(true);
 }
@@ -42,9 +41,9 @@ test("desktop studio path", async ({ page }) => {
   await page.getByRole("button", { name: "How to play" }).click();
   await expect(page.getByRole("dialog", { name: "How to play" })).toBeVisible();
   await page.getByRole("button", { name: "Close instructions" }).click();
-  await page.getByRole("button", { name: /Instrument,/ }).click();
-  await expect(page.getByRole("dialog", { name: "Instruments" })).toBeVisible();
-  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Select instrument" }).click();
+  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  await expect(page.getByTestId("instrument")).toBeVisible();
   await page.getByRole("button", { name: "Record", exact: true }).click();
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "count");
   await expect(page.getByTestId("mode-label")).toContainText("Count");

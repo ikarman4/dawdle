@@ -33,7 +33,7 @@ export function Waveform({
       peaks.forEach((peak, index) => {
         const width = rect.width / peaks.length;
         const height = Math.max(2, peak * (rect.height - 10));
-        context.fillStyle = index % 2 === 0 ? "#f0a202" : "#ffd27a";
+        context.fillStyle = index % 2 === 0 ? "#6d4aff" : "#b7a6ff";
         context.fillRect((index / peaks.length) * rect.width, mid - height / 2, Math.max(1, width - 1), height);
       });
     };
@@ -328,6 +328,204 @@ export function Timeline({
         ))}
         <div className="playhead" style={{ left: `${(playhead / 20) * 100}%` }} />
       </div>
+    </div>
+  );
+}
+
+export function InstrumentGlyph({ id }: { id: InstrumentId }) {
+  const common = { viewBox: "0 0 64 48", "aria-hidden": true as const };
+  if (id === "piano") {
+    return (
+      <svg {...common}>
+        <rect x="4" y="6" width="56" height="36" rx="3" fill="#f4f1ea" stroke="#222" />
+        {[10, 18, 26, 34, 42, 50].map((x) => (
+          <rect key={x} x={x} y="6" width="8" height="36" fill="none" stroke="#222" />
+        ))}
+        {[16, 24, 40, 48].map((x) => (
+          <rect key={x} x={x} y="6" width="6" height="20" fill="#222" />
+        ))}
+      </svg>
+    );
+  }
+  if (id === "synth") {
+    return (
+      <svg {...common}>
+        <rect x="4" y="8" width="56" height="32" rx="4" fill="#5b4dff" />
+        <circle cx="16" cy="18" r="4" fill="#ffd15c" />
+        <circle cx="28" cy="18" r="4" fill="#7dffa0" />
+        {[36, 44, 52].map((x) => (
+          <rect key={x} x={x} y="14" width="5" height="20" fill="#fff" />
+        ))}
+      </svg>
+    );
+  }
+  if (id === "guitar") {
+    return (
+      <svg {...common}>
+        <rect x="34" y="2" width="3" height="18" fill="#e7c79a" />
+        <path d="M24 20c-10 2-12 14-4 20 6 3 18 3 24 0 8-6 6-18-4-20-4 4-12 4-16 0z" fill="#e39a45" stroke="#6a3d16" />
+        <circle cx="36" cy="32" r="3" fill="#4a2a10" />
+      </svg>
+    );
+  }
+  if (id === "bass") {
+    return (
+      <svg {...common}>
+        <rect x="40" y="2" width="3" height="24" fill="#cbb59a" />
+        <path d="M22 26c-8 4-8 14 0 16 8 2 22 2 28-2 6-6 2-14-6-16-6 3-16 3-22 2z" fill="#5c331c" stroke="#2a160c" />
+        <circle cx="34" cy="34" r="2.5" fill="#1a0e08" />
+      </svg>
+    );
+  }
+  if (id === "ukulele") {
+    return (
+      <svg {...common}>
+        <rect x="30" y="10" width="3" height="12" fill="#f3d7a1" />
+        <ellipse cx="31" cy="32" rx="9" ry="8" fill="#f0c14a" stroke="#8a6418" />
+        <circle cx="31" cy="32" r="2" fill="#6a4a10" />
+      </svg>
+    );
+  }
+  if (id === "violin") {
+    return (
+      <svg {...common}>
+        <rect x="30" y="2" width="3" height="18" fill="#222" />
+        <path d="M24 20c-6 2-8 8-6 14 4 2 16 2 20 0 2-6 0-12-6-14-2 2-6 2-8 0z" fill="#8a4b2a" stroke="#3a2412" />
+      </svg>
+    );
+  }
+  if (id === "kit") {
+    return (
+      <svg {...common}>
+        <ellipse cx="20" cy="30" rx="12" ry="7" fill="#e24b4b" stroke="#222" />
+        <ellipse cx="42" cy="28" rx="10" ry="6" fill="#f2f2f2" stroke="#222" />
+        <ellipse cx="46" cy="14" rx="8" ry="3" fill="#d7c15a" stroke="#222" />
+      </svg>
+    );
+  }
+  if (id === "machine") {
+    return (
+      <svg {...common}>
+        <rect x="6" y="10" width="52" height="28" rx="4" fill="#2c2c2c" />
+        {["#ff5a5a", "#ffd15c", "#7dffa0", "#5b8cff"].map((fill, index) => (
+          <rect key={fill} x={12 + index * 12} y="18" width="8" height="12" rx="2" fill={fill} />
+        ))}
+      </svg>
+    );
+  }
+  if (id === "glock") {
+    return (
+      <svg {...common}>
+        {[0, 1, 2, 3, 4].map((index) => (
+          <rect key={index} x={8 + index * 10} y={10 + (index % 2) * 4} width="7" height={26 - index * 2} rx="2" fill="#d5dbe3" stroke="#667" />
+        ))}
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      {["#e07a3d", "#e2b04a", "#7dae4e", "#4aa3c7", "#c46ad4"].map((fill, index) => (
+        <rect key={fill} x={6 + index * 11} y={8 + index} width="8" height={30 - index * 3} rx="2" fill={fill} />
+      ))}
+    </svg>
+  );
+}
+
+export function PianoRoll({
+  base,
+  notes,
+  playhead,
+  recording,
+  onPlace,
+  onDown,
+  onUp,
+}: {
+  base: number;
+  notes: NoteEvent[];
+  playhead: number;
+  recording: boolean;
+  onPlace: (midi: number, time: number) => void;
+  onDown: (midi: number) => void;
+  onUp: (midi: number) => void;
+}) {
+  const rows: number[] = [];
+  for (let midi = base + 12; midi >= base; midi -= 1) rows.push(midi);
+  return (
+    <div className="roll" data-testid="instrument">
+      {rows.map((midi) => (
+        <button
+          type="button"
+          key={midi}
+          className="roll-row"
+          aria-label={noteName(midi)}
+          onPointerDown={() => {
+            if (recording) onDown(midi);
+          }}
+          onPointerUp={() => {
+            if (recording) onUp(midi);
+          }}
+          onClick={(event) => {
+            if (recording) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            onPlace(midi, ((event.clientX - rect.left) / rect.width) * 20);
+          }}
+        >
+          {notes
+            .filter((note) => note.pitch === midi)
+            .map((note, index) => (
+              <span
+                key={`${note.time}-${index}`}
+                className="roll-note"
+                style={{ left: `${(note.time / 20) * 100}%`, width: `${Math.max(1.2, (note.duration / 20) * 100)}%` }}
+              />
+            ))}
+        </button>
+      ))}
+      <div className="playhead" style={{ left: `${(playhead / 20) * 100}%` }} />
+    </div>
+  );
+}
+
+export function DrumLanes({
+  drums,
+  notes,
+  playhead,
+  onPlace,
+  onHit,
+}: {
+  drums: DrumName[];
+  notes: NoteEvent[];
+  playhead: number;
+  onPlace: (drum: DrumName, time: number) => void;
+  onHit: (drum: DrumName) => void;
+}) {
+  const steps = 16;
+  return (
+    <div className="drum-roll" data-testid="instrument">
+      {drums.map((drum) => (
+        <div className="drum-line" key={drum}>
+          <button type="button" className="drum-name" onClick={() => onHit(drum)}>
+            {DRUM_LABELS[drum]}
+          </button>
+          <div className="drum-steps">
+            {Array.from({ length: steps }, (_, index) => {
+              const time = (index / steps) * 20;
+              const on = notes.some((note) => note.drum === drum && note.time >= time && note.time < time + 20 / steps);
+              return (
+                <button
+                  type="button"
+                  key={index}
+                  className={on ? "cell on" : "cell"}
+                  aria-label={`${DRUM_LABELS[drum]} ${index + 1}`}
+                  aria-pressed={on}
+                  onClick={() => onPlace(drum, time + 0.2)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <div className="playhead" style={{ left: `${(playhead / 20) * 100}%` }} />
     </div>
   );
 }
