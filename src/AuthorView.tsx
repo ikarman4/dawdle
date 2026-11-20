@@ -41,7 +41,6 @@ function downloadKey(videoId: string, notes: NoteEvent[]) {
 
 export function AuthorView() {
   const date = useMemo(() => utcDateString(), []);
-  const [query, setQuery] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const song = CATALOG.find((entry) => entry.id === videoId) ?? null;
   const [tracks, setTracks] = useState<AuthorTrack[]>([]);
@@ -60,11 +59,6 @@ export function AuthorView() {
   speedRef.current = speed;
   const notes = tracks.flatMap((track) => track.events.map((event) => ({ ...event, instrument: track.instrument })));
   const peaks = useMemo(() => (song ? windowPeaks(song.id, date, 120) : []), [song, date]);
-  const needle = query.trim().toLowerCase();
-  const matches = useMemo(() => {
-    if (needle.length < 2) return [];
-    return CATALOG.filter((entry) => `${entry.title} ${entry.artist}`.toLowerCase().includes(needle)).slice(0, 80);
-  }, [needle]);
 
   function stopNotes() {
     stopPlayback();
@@ -186,30 +180,23 @@ export function AuthorView() {
         <header className="header">
           <h1 className="wordmark">Author</h1>
         </header>
-        <p>Pick a catalog song and save the note list that scores it. {KEY_COMMIT_NOTE}</p>
-        <label className="name-field">
-          <span>Find a song</span>
-          <input aria-label="Find a song" value={query} onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        {needle.length < 2 ? (
-          <p>{CATALOG.length} songs. Type two letters to search. A checkmark means a scoring key is already committed.</p>
-        ) : (
-          <ul className="author-list" aria-label="Catalog">
-            {matches.map((entry) => {
-              const saved = hasAuthoredKey(entry.id);
-              return (
-                <li key={entry.id}>
-                  <button type="button" onClick={() => choose(entry.id)}>
-                    <span aria-hidden="true">{saved ? "✓" : ""}</span>
-                    {entry.title}
-                    <span className="author-by">{entry.artist}</span>
-                  </button>
-                </li>
-              );
-            })}
-            {matches.length === 0 && <li>No songs match.</li>}
-          </ul>
-        )}
+        <p>Pick a catalog song and save the note list that scores it. A checkmark means a scoring key is already committed. {KEY_COMMIT_NOTE}</p>
+        <ul className="author-list" aria-label="Catalog">
+          {CATALOG.map((entry) => {
+            const saved = hasAuthoredKey(entry.id);
+            return (
+              <li key={entry.id}>
+                <button type="button" aria-label={`${entry.title}, ${entry.artist}${saved ? ", key saved" : ""}`} onClick={() => choose(entry.id)}>
+                  <span className="author-title">{entry.title}</span>
+                  <span className="author-by">{entry.artist}</span>
+                  <span className="author-mark" aria-hidden="true">
+                    {saved ? "✓" : ""}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       </div>
     );
   }

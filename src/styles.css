@@ -505,9 +505,24 @@ button.daw-row.black { background: rgba(0, 0, 0, 0.045); }
 .sketch .daw-scroll { max-height: 180px; }
 .author { display: flex; flex-direction: column; gap: 10px; }
 .author h1 { margin: 0; font-size: 22px; }
-.author-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
-.author-list button { width: 100%; text-align: left; display: flex; gap: 8px; align-items: baseline; }
-.author-by { color: var(--muted); font-size: 13px; }
+.author-list { list-style: none; margin: 0; padding: 0; max-height: calc(100dvh - 160px); overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.author-list li { border-bottom: 1px solid var(--line); }
+.author-list li:last-child { border-bottom: 0; }
+.author-list button {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 1.2em;
+  gap: 8px;
+  align-items: baseline;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 10px;
+}
+.author-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.author-by { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.author-mark { text-align: center; }
 .author-link { margin: 0; text-align: center; font-size: 13px; }
 .author-link a { color: var(--ink); }
 

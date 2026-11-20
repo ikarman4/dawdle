@@ -5,7 +5,11 @@ test("author route lists songs and explains the key file", async ({ page }) => {
   await page.goto("/dawdle/#author");
   await expect(page.getByRole("heading", { name: "Author" })).toBeVisible();
   await expect(page.getByText("Ian commits the saved file.")).toBeVisible();
-  await page.getByLabel("Find a song").fill("Ribbon");
+  await expect(page.getByLabel("Find a song")).toHaveCount(0);
+  const list = page.getByRole("list", { name: "Catalog" });
+  const size = await list.evaluate((el) => ({ scroll: el.scrollHeight, view: el.clientHeight, rows: el.querySelectorAll("li").length }));
+  expect(size.rows).toBeGreaterThan(2000);
+  expect(size.scroll).toBeGreaterThan(size.view + 200);
   await page.getByRole("button", { name: /Tie a Yellow Ribbon/ }).click();
   await expect(page.getByRole("heading", { name: "Tie a Yellow Ribbon Round the Ole Oak Tree" })).toBeVisible();
   await expect(page.getByText("no key yet")).toBeVisible();
