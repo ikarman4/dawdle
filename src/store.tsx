@@ -17,6 +17,7 @@ import {
   cloneNotes,
   emptyTrack,
   freshDay,
+  INSTRUMENTS,
   SECTIONS,
   type BoardCard,
   type DayState,
@@ -50,6 +51,7 @@ type Action =
   | { type: "roll"; today: string }
   | { type: "reveal" }
   | { type: "add-events"; instrument: InstrumentId; events: NoteEvent[] }
+  | { type: "save-track"; instrument: InstrumentId; events: NoteEvent[] }
   | { type: "delete-event"; instrument: InstrumentId; index: number }
   | { type: "resize-event"; instrument: InstrumentId; index: number; duration: number }
   | { type: "mute"; instrument: InstrumentId }
@@ -78,9 +80,27 @@ export function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
+function isInstrument(value: unknown): value is InstrumentId {
+  return typeof value === "string" && INSTRUMENTS.some((item) => item.id === value);
+}
+
+function normalizeTrack(value: Partial<Track> | undefined, index: number): Track | null {
+  if (!value || !isInstrument(value.instrument)) return null;
+  const id = typeof value.id === "string" && value.id ? value.id : `track-${index}-${value.instrument}`;
+  return {
+    id,
+    instrument: value.instrument,
+    events: Array.isArray(value.events) ? value.events : [],
+    mute: Boolean(value.mute),
+    solo: Boolean(value.solo),
+    technique: typeof value.technique === "string" ? value.technique : undefined,
+  };
+}
+
 function normalizeDay(value: Partial<DayState> | undefined): DayState {
   const base = freshDay();
   if (!value || typeof value !== "object") return base;
+  const tracks = Array.isArray(value.tracks) ? value.tracks.map((track, index) => normalizeTrack(track, index)).filter((track): track is Track => track != null) : [];
   return {
     ...base,
     mode: value.mode === "hard" ? "hard" : "easy",
@@ -91,7 +111,7 @@ function normalizeDay(value: Partial<DayState> | undefined): DayState {
     sectionFilled: value.sectionFilled ?? null,
     declinedSection: Boolean(value.declinedSection),
     locked: Boolean(value.locked),
-    tracks: Array.isArray(value.tracks) ? value.tracks : [],
+    tracks,
     revealed: Boolean(value.revealed),
   };
 }
@@ -119,13 +139,11 @@ function loadSave(): SaveShape {
 }
 
 function withTrack(day: DayState, instrument: InstrumentId, change: (track: Track) => Track): DayState {
-  const tracks = day.tracks.some((track) => track.instrument === instrument)
-    ? day.tracks
-    : [...day.tracks, emptyTrack(instrument)];
-  return {
-    ...day,
-    tracks: tracks.map((track) => (track.instrument === instrument ? change(track) : track)),
-  };
+  const index = day.tracks.findIndex((track) => track.instrument === instrument);
+  if (index < 0) return { ...day, tracks: [...day.tracks, change(emptyTrack(instrument))] };
+  const tracks = day.tracks.slice();
+  tracks[index] = change(tracks[index]);
+  return { ...day, tracks };
 }
 
 function sorted(events: NoteEvent[]): NoteEvent[] {
@@ -164,6 +182,12 @@ function reducer(state: GameState, action: Action): GameState {
     case "add-events":
       if (current.locked) return state;
       return commit(withTrack(current, action.instrument, (track) => ({ ...track, events: sorted([...track.events, ...cloneNotes(action.events)]) })));
+    case "save-track": {
+      if (current.locked || action.events.length === 0) return state;
+      const track = emptyTrack(action.instrument);
+      track.events = sorted(cloneNotes(action.events).map((event) => ({ ...event, instrument: action.instrument })));
+      return commit({ ...current, tracks: [...current.tracks, track] });
+    }
     case "delete-event":
       if (current.locked) return state;
       return commit(withTrack(current, action.instrument, (track) => ({ ...track, events: track.events.filter((_, index) => index !== action.index) })));
@@ -215,10 +239,8 @@ function reducer(state: GameState, action: Action): GameState {
         if (!present.has(instrument)) continue;
         filled = true;
         const events = song.notes.filter((note) => note.instrument === instrument).map((note) => ({ ...note }));
-        const index = tracks.findIndex((track) => track.instrument === instrument);
-        const next = { ...(index >= 0 ? tracks[index] : emptyTrack(instrument)), events, technique: undefined };
-        if (index >= 0) tracks[index] = next;
-        else tracks = [...tracks, next];
+        tracks = tracks.filter((track) => track.instrument !== instrument);
+        tracks = [...tracks, { ...emptyTrack(instrument), events }];
       }
       if (!filled) return state;
       let day: DayState = { ...current, tracks, sectionFilled: action.section, hintTier: 5, modeLocked: true };

@@ -44,6 +44,7 @@ export interface Song {
 }
 
 export interface Track {
+  id: string;
   instrument: InstrumentId;
   events: NoteEvent[];
   mute: boolean;
@@ -158,8 +159,12 @@ export function freshDay(): DayState {
   };
 }
 
+let trackSerial = 0;
+
 export function emptyTrack(instrument: InstrumentId, technique?: string): Track {
-  return { instrument, events: [], mute: false, solo: false, technique };
+  trackSerial += 1;
+  const id = `track-${trackSerial.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return { id, instrument, events: [], mute: false, solo: false, technique };
 }
 
 export function cloneNotes(notes: NoteEvent[]): NoteEvent[] {

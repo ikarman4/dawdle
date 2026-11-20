@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatClock } from "./daily";
 import { peaksFor } from "./score";
-import { DRUM_LABELS, drumsFor, noteName, type DrumName, type InstrumentId, type NoteEvent } from "./types";
+import { DRUM_LABELS, drumsFor, instrumentInfo, noteName, type DrumName, type InstrumentId, type NoteEvent } from "./types";
 
 export function Waveform({
   notes,
@@ -526,6 +526,277 @@ export function DrumLanes({
         </div>
       ))}
       <div className="playhead" style={{ left: `${(playhead / 20) * 100}%` }} />
+    </div>
+  );
+}
+
+const SHORT_DRUM: Record<DrumName, string> = {
+  kick: "Kick",
+  snare: "Snare",
+  closedHat: "Hat C",
+  openHat: "Hat O",
+  tom: "Tom",
+  clap: "Clap",
+  hat: "Hat",
+};
+
+export interface RollRow {
+  key: string;
+  label: string;
+  short: string;
+  midi?: number;
+  drum?: DrumName;
+  black?: boolean;
+}
+
+export function rowsFor(id: InstrumentId): RollRow[] {
+  const info = instrumentInfo(id);
+  if (info.kind === "drum") {
+    return drumsFor(id).map((drum) => ({
+      key: drum,
+      label: DRUM_LABELS[drum],
+      short: SHORT_DRUM[drum],
+      drum,
+    }));
+  }
+  const rows: RollRow[] = [];
+  for (let midi = info.baseMidi + 24; midi >= info.baseMidi; midi -= 1) {
+    const black = [1, 3, 6, 8, 10].includes(((midi % 12) + 12) % 12);
+    const name = noteName(midi);
+    rows.push({ key: String(midi), label: name, short: name, midi, black });
+  }
+  return rows;
+}
+
+const ROLL_PX = 72;
+const ROLL_KEY = 56;
+
+function snapTime(time: number, step: number): number {
+  const clamped = Math.min(19.95, Math.max(0, time));
+  if (step <= 0) return Math.round(clamped * 1000) / 1000;
+  const snapped = Math.round(clamped / step) * step;
+  return Math.round(Math.min(19.95, Math.max(0, snapped)) * 1000) / 1000;
+}
+
+export function NoteRoll({
+  instrument,
+  rows,
+  notes,
+  playhead,
+  disabled,
+  step,
+  defaultDuration,
+  follow,
+  onChange,
+  onPreview,
+  onKeyDown,
+  onKeyUp,
+}: {
+  instrument: InstrumentId;
+  rows: RollRow[];
+  notes: NoteEvent[];
+  playhead: number;
+  disabled: boolean;
+  step: number;
+  defaultDuration: number;
+  follow: boolean;
+  onChange: (notes: NoteEvent[]) => void;
+  onPreview: (note: NoteEvent) => void;
+  onKeyDown: (row: RollRow) => void;
+  onKeyUp: (row: RollRow) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const notesRef = useRef(notes);
+  const tap = useRef<{ x: number; y: number; key: string } | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+  const rowH = rows.some((row) => row.drum) ? 36 : 18;
+
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
+  useEffect(() => {
+    if (!follow) return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const x = ROLL_KEY + playhead * ROLL_PX;
+    const left = scroller.scrollLeft;
+    const view = scroller.clientWidth;
+    if (x < left + ROLL_KEY + 8 || x > left + view - 28) {
+      scroller.scrollLeft = Math.max(0, x - ROLL_KEY - view * 0.3);
+    }
+  }, [follow, playhead]);
+
+  function rowIndex(note: NoteEvent): number {
+    const index = rows.findIndex((row) => (row.drum ? row.drum === note.drum : row.midi === note.pitch));
+    return index < 0 ? 0 : index;
+  }
+
+  function write(next: NoteEvent[]) {
+    notesRef.current = next;
+    onChange(next);
+  }
+
+  function place(row: RollRow, clientX: number) {
+    const sheet = sheetRef.current;
+    if (!sheet || disabled) return;
+    const time = snapTime((clientX - sheet.getBoundingClientRect().left) / ROLL_PX, step);
+    const span = row.drum ? step : Math.max(step, defaultDuration);
+    const duration = Math.round(Math.min(span, 20 - time) * 1000) / 1000;
+    if (duration < step * 0.5) return;
+    const note: NoteEvent = row.drum
+      ? { instrument, drum: row.drum, time, duration, velocity: 0.86 }
+      : { instrument, pitch: row.midi, time, duration, velocity: 0.8 };
+    write([...notesRef.current, note].sort((a, b) => a.time - b.time));
+    setSelected(null);
+    onPreview(note);
+  }
+
+  function onNoteDown(event: React.PointerEvent<HTMLDivElement>, index: number) {
+    if (disabled) return;
+    if ((event.target as HTMLElement).closest(".daw-edge")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const originX = event.clientX;
+    const originY = event.clientY;
+    const originRow = rowIndex(notesRef.current[index]);
+    let moved = false;
+    let lastRow = originRow;
+    const move = (ev: PointerEvent) => {
+      if (Math.hypot(ev.clientX - originX, ev.clientY - originY) > 5) moved = true;
+      const delta = Math.round((ev.clientY - originY) / rowH);
+      const nextRow = Math.min(rows.length - 1, Math.max(0, originRow + delta));
+      if (nextRow === lastRow) return;
+      lastRow = nextRow;
+      const row = rows[nextRow];
+      const current = notesRef.current[index];
+      const updated: NoteEvent = row.drum
+        ? { ...current, drum: row.drum, pitch: undefined }
+        : { ...current, pitch: row.midi, drum: undefined };
+      const copy = notesRef.current.slice();
+      copy[index] = updated;
+      write(copy);
+      onPreview(updated);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (moved) return;
+      if (selected === index) {
+        write(notesRef.current.filter((_, noteIndex) => noteIndex !== index));
+        setSelected(null);
+        return;
+      }
+      setSelected(index);
+      onPreview(notesRef.current[index]);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  function onEdgeDown(event: React.PointerEvent<HTMLSpanElement>, index: number) {
+    if (disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const originX = event.clientX;
+    const origin = notesRef.current[index];
+    const move = (ev: PointerEvent) => {
+      const raw = origin.duration + (ev.clientX - originX) / ROLL_PX;
+      const steps = Math.max(1, Math.round(raw / step));
+      const duration = Math.round(Math.min(20 - origin.time, steps * step) * 1000) / 1000;
+      const copy = notesRef.current.slice();
+      copy[index] = { ...copy[index], time: origin.time, duration };
+      write(copy);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  const lines = Math.floor(20 / Math.max(step, 0.05));
+
+  return (
+    <div className="daw-scroll" data-testid="instrument" ref={scrollRef} role="region" aria-label="Roll for 20 seconds" tabIndex={0}>
+      <div className="daw-grid" style={{ width: ROLL_KEY + 20 * ROLL_PX, ["--row-h" as string]: `${rowH}px` }}>
+        <div className="daw-keys">
+          {rows.map((row) => (
+            <button
+              type="button"
+              key={row.key}
+              className={row.black ? "daw-key black" : "daw-key"}
+              aria-label={row.label}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                onKeyDown(row);
+              }}
+              onPointerUp={() => onKeyUp(row)}
+              onPointerCancel={() => onKeyUp(row)}
+            >
+              {row.short}
+            </button>
+          ))}
+        </div>
+        <div className="daw-sheet" ref={sheetRef}>
+          {rows.map((row) => (
+            <div
+              key={row.key}
+              className={row.black ? "daw-row black" : "daw-row"}
+              data-midi={row.midi ?? ""}
+              data-drum={row.drum ?? ""}
+              onPointerDown={(event) => {
+                if ((event.target as HTMLElement).closest("[data-note]")) return;
+                tap.current = { x: event.clientX, y: event.clientY, key: row.key };
+              }}
+              onPointerUp={(event) => {
+                const start = tap.current;
+                tap.current = null;
+                if (!start || start.key !== row.key || disabled) return;
+                if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) return;
+                place(row, event.clientX);
+              }}
+            />
+          ))}
+          {Array.from({ length: lines + 1 }, (_, index) => (
+            <div
+              key={index}
+              className={index % 16 === 0 ? "daw-line bar" : index % 4 === 0 ? "daw-line beat" : "daw-line"}
+              style={{ left: index * step * ROLL_PX }}
+            />
+          ))}
+          {notes.map((note, index) => {
+            const row = rowIndex(note);
+            return (
+              <div
+                key={index}
+                className={selected === index ? "daw-note selected" : "daw-note"}
+                data-note="true"
+                data-testid="roll-note"
+                data-pitch={note.pitch ?? ""}
+                data-drum={note.drum ?? ""}
+                data-time={note.time}
+                data-duration={note.duration}
+                role="button"
+                aria-label={`${rows[row]?.label ?? "Note"} at ${formatClock(note.time)}`}
+                style={{
+                  top: row * rowH + 2,
+                  height: rowH - 4,
+                  left: note.time * ROLL_PX,
+                  width: Math.max(14, note.duration * ROLL_PX),
+                }}
+                onPointerDown={(event) => onNoteDown(event, index)}
+              >
+                <span className="daw-edge" onPointerDown={(event) => onEdgeDown(event, index)} />
+              </div>
+            );
+          })}
+          <div className="playhead" style={{ left: playhead * ROLL_PX }} />
+        </div>
+      </div>
     </div>
   );
 }
