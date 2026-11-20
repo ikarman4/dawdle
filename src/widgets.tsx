@@ -613,18 +613,15 @@ export function NoteRoll({
   const gridRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef(notes);
-  const gesture = useRef<{ x: number; y: number; dragged: boolean; fromKey: boolean } | null>(null);
+  const gesture = useRef<{ x: number; y: number; dragged: boolean; fromKey: boolean; provisional: NoteEvent | null } | null>(null);
   const placed = useRef(false);
   const sounding = useRef<RollRow | null>(null);
-  const holdTimer = useRef(0);
   const [selected, setSelected] = useState<number | null>(null);
   const rowH = rows.some((row) => row.drum) ? 36 : 18;
 
   useEffect(() => {
     notesRef.current = notes;
   }, [notes]);
-
-  useEffect(() => () => window.clearTimeout(holdTimer.current), []);
 
   useEffect(() => {
     if (!follow) return;
@@ -648,15 +645,23 @@ export function NoteRoll({
     onChange(next);
   }
 
-  function place(row: RollRow, clientX: number) {
+  function place(row: RollRow, clientX: number): NoteEvent | null {
     const sheet = sheetRef.current;
-    if (!sheet || disabled) return;
+    if (!sheet || disabled) return null;
     const time = snapTime((clientX - sheet.getBoundingClientRect().left) / ROLL_PX, step);
     const note = eventFromPointer({ instrument, midi: row.midi, drum: row.drum, time, step, beat: defaultDuration });
-    if (!note) return;
+    if (!note) return null;
     write([...notesRef.current, note].sort((a, b) => a.time - b.time));
     setSelected(null);
     onPreview(note);
+    return note;
+  }
+
+  function dropProvisional() {
+    const note = gesture.current?.provisional;
+    if (!note) return;
+    gesture.current!.provisional = null;
+    write(notesRef.current.filter((item) => item !== note));
   }
 
   function rowFromClientY(clientY: number): RollRow | null {
@@ -698,19 +703,19 @@ export function NoteRoll({
     const onRow = Boolean(target.closest(".daw-row"));
     if (!fromKey && !onRow) return;
     event.preventDefault();
-    window.clearTimeout(holdTimer.current);
     placed.current = false;
-    gesture.current = { x: event.clientX, y: event.clientY, dragged: false, fromKey };
+    const row = rowFromClientY(event.clientY);
+    gesture.current = { x: event.clientX, y: event.clientY, dragged: false, fromKey, provisional: null };
     if (fromKey) {
       event.currentTarget.setPointerCapture(event.pointerId);
-      sound(rowFromClientY(event.clientY));
+      if (row) sound(row);
       return;
     }
-    holdTimer.current = window.setTimeout(() => {
-      const current = gesture.current;
-      if (!current || current.dragged) return;
-      sound(rowFromClientY(current.y));
-    }, 80);
+    if (!row) return;
+    const note = place(row, event.clientX);
+    if (!note) return;
+    gesture.current.provisional = note;
+    placed.current = true;
   }
 
   function onGridPointerMove(event: React.PointerEvent<HTMLDivElement>) {
@@ -718,26 +723,21 @@ export function NoteRoll({
     if (!current) return;
     const dx = event.clientX - current.x;
     const dy = event.clientY - current.y;
-    if (!current.dragged && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+    if (Math.hypot(dx, dy) < 22) return;
+    if (!current.dragged) {
       current.dragged = true;
-      window.clearTimeout(holdTimer.current);
+      dropProvisional();
+    }
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId);
+    if (Math.abs(dx) > Math.abs(dy) + 8) {
       silence();
       return;
     }
-    if (!current.dragged && Math.abs(dy) < 6) return;
-    current.dragged = true;
-    window.clearTimeout(holdTimer.current);
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId);
     sound(rowFromClientY(event.clientY));
   }
 
   function onGridPointerUp() {
-    window.clearTimeout(holdTimer.current);
     silence();
-    const current = gesture.current;
-    if (!current || current.dragged || current.fromKey) return;
-    const row = rowFromClientY(current.y);
-    if (row) placeRow(row, current.x);
   }
 
   function onSheetClick(event: React.MouseEvent<HTMLDivElement>) {

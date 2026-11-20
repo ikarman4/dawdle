@@ -134,10 +134,21 @@ function ensureBuilt() {
   applyQuiet();
 }
 
+/** Call inside a pointer or click handler, before any await, so the real context resumes. */
+export function primeAudio(): void {
+  try {
+    ensureBuilt();
+    const context = Tone.getContext();
+    if (context.state !== "running") void context.resume();
+  } catch {
+    /* a later press can resume it */
+  }
+}
+
 export async function resumeAudio(): Promise<boolean> {
   try {
+    primeAudio();
     await Tone.start();
-    ensureBuilt();
     await loading;
     return true;
   } catch {
