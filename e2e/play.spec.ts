@@ -48,6 +48,9 @@ async function expectStudio(page: Page) {
   await expect(page.getByLabel("Playback speed").locator("option")).toHaveText(["0.5x", "0.75x", "1x", "1.25x", "1.5x"]);
   await expectInView(page, page.getByRole("button", { name: "Instrument playground" }));
   await expectInView(page, page.getByRole("button", { name: "Add instrument" }));
+  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
+  await expect(page.getByText("To hear see how your song matches up submit your composition", { exact: true })).toBeVisible();
+  await expect(page.getByText("0/5 submissions", { exact: true })).toBeVisible();
   await expectInView(page, page.getByRole("button", { name: "Submit", exact: true }));
   await expectInView(page, page.getByLabel("Volume for the song and your instruments"));
   await expect(page.getByRole("heading", { name: "Your song" })).toBeVisible();
@@ -59,6 +62,9 @@ test("desktop studio path", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await openToday(page);
   await expectStudio(page);
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(page.getByRole("button", { name: "Stop your song" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop your song" }).click();
   await page.getByRole("button", { name: "How to play" }).click();
   await expect(page.getByRole("dialog", { name: "How to play" })).toBeVisible();
   await page.getByRole("button", { name: "Close instructions" }).click();
@@ -126,6 +132,10 @@ test("desktop studio path", async ({ page }) => {
   const songHasPiano = names.includes("Piano");
   await expect(page.locator(".track.flash-have")).toHaveCount(songHasPiano ? pianoRows : 0);
   await expect(page.locator(".track.flash-new")).toHaveCount(names.length - (songHasPiano ? 1 : 0));
+  await page.getByRole("button", { name: "Submit", exact: true }).click();
+  await page.getByRole("dialog", { name: "Your name" }).getByRole("textbox").fill("Ada");
+  await page.getByRole("button", { name: "Use this name" }).click();
+  await expect(page.getByText("1/5 submissions", { exact: true })).toBeVisible();
 });
 
 test("roll places, hears, stretches, moves, and saves piano and drums", async ({ page }) => {

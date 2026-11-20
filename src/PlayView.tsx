@@ -410,7 +410,6 @@ export function PlayView() {
       return;
     }
     const events = mixEvents(day.tracks);
-    if (!events.length) return;
     setMixOn(true);
     primeAudio();
     void resumeAudio().then(() => begin(0, events, false));
@@ -595,7 +594,6 @@ export function PlayView() {
   const [year, month, dayOfMonth] = state.today.split("-");
   const prettyDate = `${Number(month)}/${Number(dayOfMonth)}/${year}`;
   const songLine = `${song.title} ${song.artist} · ${song.year}`;
-  const savedTracks = day.tracks.filter((track) => track.events.length > 0);
   function labelFor(row: SongRow): string {
     if (!row.instrument) return "Select instrument";
     const name = instrumentInfo(row.instrument).name;
@@ -810,7 +808,7 @@ export function PlayView() {
             <button type="button" className="add-track" aria-label="Add instrument" onClick={addRow}>
               +
             </button>
-            <button type="button" className="listen-pill" aria-label={mixOn ? "Stop your song" : "Listen"} onClick={onListen} disabled={savedTracks.length === 0 && !mixOn}>
+            <button type="button" className="listen-pill" aria-label={mixOn ? "Stop your song" : "Listen"} onClick={onListen}>
               {mixOn ? "Stop" : "Listen"}
             </button>
           </div>
@@ -897,6 +895,11 @@ export function PlayView() {
           );
         })}
       </div>}
+
+      <div className="submit-note">
+        <p>To hear see how your song matches up submit your composition</p>
+        <p>{day.attempts.length}/5 submissions</p>
+      </div>
 
       <div className="submit-wrap">
         <button type="button" className="submit-pill" onClick={onSubmit} disabled={day.locked || day.attempts.length >= 5}>
