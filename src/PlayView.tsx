@@ -71,6 +71,7 @@ export function PlayView() {
   const [armed, setArmed] = useState<InstrumentId>("piano");
   const [draft, setDraft] = useState<NoteEvent[]>([]);
   const [writer, setWriter] = useState<"closed" | "pick" | "roll">("closed");
+  const [place, setPlace] = useState<"playground" | "row">("playground");
   const [rows, setRows] = useState<SongRow[]>(() => rowsFromTracks(day.tracks));
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [mixOn, setMixOn] = useState(false);
@@ -82,6 +83,10 @@ export function PlayView() {
   const rowsRef = useRef<SongRow[]>(rowsFromTracks(day.tracks));
   const activeRowRef = useRef<string | null>(null);
   const drafts = useRef<Record<string, NoteEvent[]>>({});
+  const placeRef = useRef<"playground" | "row">("playground");
+  const playDraft = useRef<NoteEvent[]>([]);
+  const playArmed = useRef<InstrumentId>("piano");
+  const playChosen = useRef(false);
   const flashTimer = useRef<number | null>(null);
   const [volume, setVolume] = useState(0.85);
   const [copied, setCopied] = useState(false);
@@ -198,9 +203,29 @@ export function PlayView() {
   }
 
   function stashDraft() {
+    const notes = draftRef.current.map((event) => ({ ...event }));
+    if (placeRef.current === "playground") {
+      playDraft.current = notes;
+      return;
+    }
     const id = activeRowRef.current;
     if (!id) return;
-    drafts.current[id] = draftRef.current.map((event) => ({ ...event }));
+    drafts.current[id] = notes;
+  }
+
+  function showPlaygroundDraft() {
+    const next = playDraft.current.map((event) => ({ ...event }));
+    draftRef.current = next;
+    setDraft(next);
+    if (playChosen.current) {
+      armedRef.current = playArmed.current;
+      setArmed(playArmed.current);
+    }
+  }
+
+  function movePlace(next: "playground" | "row") {
+    placeRef.current = next;
+    setPlace(next);
   }
 
   function rememberRows(next: SongRow[]) {
@@ -247,11 +272,28 @@ export function PlayView() {
     rememberRows([...rowsRef.current, row]);
   }
 
-  function openPicker() {
-    if (!activeRowRef.current) return;
+  function openPlayground() {
     stopSong();
     stopMix();
+    const here = placeRef.current === "playground";
     stashDraft();
+    if (here && writer === "pick") {
+      if (playChosen.current) {
+        showPlaygroundDraft();
+        setWriter("roll");
+      } else {
+        setWriter("closed");
+      }
+      return;
+    }
+    if (here && writer === "roll") {
+      setWriter("pick");
+      return;
+    }
+    movePlace("playground");
+    activeRowRef.current = null;
+    setActiveRow(null);
+    showPlaygroundDraft();
     setWriter("pick");
   }
 
@@ -261,15 +303,16 @@ export function PlayView() {
     stashDraft();
     const row = rowsRef.current.find((item) => item.id === rowId);
     if (!row) return;
-    if (activeRowRef.current === rowId && writer === "pick") {
+    if (placeRef.current === "row" && activeRowRef.current === rowId && writer === "pick") {
       setWriter(row.instrument ? "roll" : "closed");
       if (row.instrument) loadRow(row);
       return;
     }
-    if (activeRowRef.current === rowId && writer === "roll" && row.instrument) {
+    if (placeRef.current === "row" && activeRowRef.current === rowId && writer === "roll" && row.instrument) {
       setWriter("closed");
       return;
     }
+    movePlace("row");
     activeRowRef.current = rowId;
     setActiveRow(rowId);
     if (row.instrument) {
@@ -284,11 +327,29 @@ export function PlayView() {
   }
 
   function chooseInstrument(id: InstrumentId) {
-    const rowId = activeRowRef.current;
-    const row = rowsRef.current.find((item) => item.id === rowId);
-    if (!row || day.locked) return;
+    if (day.locked) return;
     stopSong();
     stopMix();
+    if (placeRef.current === "playground") {
+      const previous = playChosen.current ? playArmed.current : null;
+      const nextKind = instrumentInfo(id).kind;
+      const prevKind = previous ? instrumentInfo(previous).kind : null;
+      let notes = draftRef.current.map((event) => ({ ...event }));
+      if (previous && previous !== id && prevKind !== nextKind) notes = [];
+      notes = notes.map((event) => ({ ...event, instrument: id }));
+      playDraft.current = notes;
+      playArmed.current = id;
+      playChosen.current = true;
+      draftRef.current = notes.slice();
+      setDraft(notes);
+      armedRef.current = id;
+      setArmed(id);
+      setWriter("roll");
+      return;
+    }
+    const rowId = activeRowRef.current;
+    const row = rowsRef.current.find((item) => item.id === rowId);
+    if (!row) return;
     const previous = row.instrument;
     const nextKind = instrumentInfo(id).kind;
     const prevKind = previous ? instrumentInfo(previous).kind : null;
@@ -363,10 +424,30 @@ export function PlayView() {
     void resumeAudio().then(() => begin(0, events, false));
   }
 
+  function savePlayground() {
+    const events = draftRef.current;
+    if (!playChosen.current || !events.length || day.locked) return;
+    const instrument = playArmed.current;
+    const rowId = newRowId();
+    const trackId = `track-${rowId}`;
+    const tagged = events.map((event) => ({ ...event, instrument }));
+    dispatch({ type: "save-track", id: trackId, instrument, events: tagged });
+    rememberRows([...rowsRef.current, { id: rowId, instrument, trackId }]);
+    playDraft.current = [];
+    playChosen.current = false;
+    draftRef.current = [];
+    setDraft([]);
+    setWriter("closed");
+  }
+
   function onSave() {
     stopPlayback();
     setPartOn(false);
     setMixOn(false);
+    if (placeRef.current === "playground") {
+      savePlayground();
+      return;
+    }
     persistActive();
     draftRef.current = [];
     setDraft([]);
@@ -380,6 +461,9 @@ export function PlayView() {
     setPartOn(false);
     setMixOn(false);
     drafts.current = {};
+    playDraft.current = [];
+    playChosen.current = false;
+    movePlace("playground");
     activeRowRef.current = null;
     setActiveRow(null);
     draftRef.current = [];
@@ -402,7 +486,8 @@ export function PlayView() {
     stopSong();
     setPartOn(false);
     setMixOn(false);
-    persistActive();
+    if (placeRef.current === "playground") savePlayground();
+    else persistActive();
     draftRef.current = [];
     setDraft([]);
     if (!nameReady(state.username)) {
@@ -425,6 +510,7 @@ export function PlayView() {
         rememberRows([...rowsRef.current, row]);
       }
     }
+    movePlace("row");
     activeRowRef.current = row.id;
     setActiveRow(row.id);
     armedRef.current = id;
@@ -518,6 +604,78 @@ export function PlayView() {
     }
   }
 
+  function instrumentGrid(pressed: InstrumentId | null) {
+    return (
+      <div className="inst-grid" role="listbox" aria-label="Instruments">
+        {INSTRUMENTS.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className={day.instrumentsRevealed && present.has(item.id) ? "in-song" : ""}
+            aria-label={item.name}
+            aria-pressed={pressed === item.id}
+            onClick={() => chooseInstrument(item.id)}
+          >
+            <span className="pick-emoji" aria-hidden="true">
+              {INSTRUMENT_EMOJI[item.id]}
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  function rollCard() {
+    return (
+      <div className="roll-card">
+        <NoteRoll
+          instrument={armed}
+          rows={rowsFor(armed)}
+          notes={draft}
+          ghosts={ghosts}
+          playhead={playhead}
+          disabled={day.locked}
+          step={beatSeconds(song.bpm) / 4}
+          defaultDuration={beatSeconds(song.bpm)}
+          follow={partOn}
+          onChange={replaceDraft}
+          onPreview={(note) => {
+            primeAudio();
+            triggerEvent({ ...note, duration: Math.min(0.4, Math.max(0.08, note.duration)) });
+            void resumeAudio();
+          }}
+          onKeyDown={(row) => {
+            primeAudio();
+            if (row.drum) {
+              triggerEvent({ instrument: armed, drum: row.drum, time: 0, duration: 0.12, velocity: 0.86 });
+            } else if (row.midi != null) {
+              beginPitch(armed, row.midi!);
+            }
+            void resumeAudio();
+          }}
+          onKeyUp={(row) => {
+            if (row.midi != null) endPitch(armed, row.midi);
+          }}
+        />
+        <button type="button" className="save-song" onClick={onSave} disabled={day.locked || draft.length === 0}>
+          Save to song
+        </button>
+      </div>
+    );
+  }
+
+  const playControl = (
+    <button
+      type="button"
+      className="rec"
+      aria-label={partOn ? "Stop this instrument" : "Play this instrument"}
+      disabled={!partOn && draft.length === 0}
+      onClick={onPlayPart}
+    >
+      {partOn ? "Stop" : "Play"}
+    </button>
+  );
+
   return (
     <div className="studio" data-mode="listen" data-part={partOn ? "on" : "off"} data-testid="listen">
       <header className="top">
@@ -609,81 +767,22 @@ export function PlayView() {
       )}
       {!status && <p className="mode-label" data-testid="mode-label" />}
 
-      {writer === "roll" && (
+      <div className="playground">
         <div className="inst-row">
-          <button type="button" className="inst-toggle" onClick={openPicker}>
-            {info.name}
-            <Caret up={false} />
+          <button type="button" className="inst-toggle" aria-label="Instrument playground" onClick={openPlayground}>
+            Instrument playground
+            <Caret up={place === "playground" && writer === "pick"} />
           </button>
-          <div className="part-actions">
-            <button
-              type="button"
-              className="rec"
-              aria-label={partOn ? "Stop this instrument" : "Play this instrument"}
-              disabled={!partOn && draft.length === 0}
-              onClick={onPlayPart}
-            >
-              {partOn ? "Stop" : "Play"}
-            </button>
-          </div>
+          {place === "playground" && writer === "roll" && (
+            <div className="part-actions">
+              <span className="track-name">{info.name}</span>
+              {playControl}
+            </div>
+          )}
         </div>
-      )}
-
-      {writer === "pick" && (
-        <div className="inst-grid" role="listbox" aria-label="Instruments">
-          {INSTRUMENTS.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className={day.instrumentsRevealed && present.has(item.id) ? "in-song" : ""}
-              aria-label={item.name}
-              aria-pressed={rows.find((row) => row.id === activeRow)?.instrument === item.id}
-              onClick={() => chooseInstrument(item.id)}
-            >
-              <span className="pick-emoji" aria-hidden="true">
-                {INSTRUMENT_EMOJI[item.id]}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {writer === "roll" && (
-        <div className="roll-card">
-          <NoteRoll
-            instrument={armed}
-            rows={rowsFor(armed)}
-            notes={draft}
-            ghosts={ghosts}
-            playhead={playhead}
-            disabled={day.locked}
-            step={beatSeconds(song.bpm) / 4}
-            defaultDuration={beatSeconds(song.bpm)}
-            follow={partOn}
-            onChange={replaceDraft}
-            onPreview={(note) => {
-              primeAudio();
-              triggerEvent({ ...note, duration: Math.min(0.4, Math.max(0.08, note.duration)) });
-              void resumeAudio();
-            }}
-            onKeyDown={(row) => {
-              primeAudio();
-              if (row.drum) {
-                triggerEvent({ instrument: armed, drum: row.drum, time: 0, duration: 0.12, velocity: 0.86 });
-              } else if (row.midi != null) {
-                beginPitch(armed, row.midi!);
-              }
-              void resumeAudio();
-            }}
-            onKeyUp={(row) => {
-              if (row.midi != null) endPitch(armed, row.midi);
-            }}
-          />
-          <button type="button" className="save-song" onClick={onSave} disabled={day.locked || draft.length === 0}>
-            Save to song
-          </button>
-        </div>
-      )}
+        {place === "playground" && writer === "pick" && instrumentGrid(playChosen.current ? armed : null)}
+        {place === "playground" && writer === "roll" && rollCard()}
+      </div>
 
       <section className="song-card">
         <div className="song-head">
@@ -703,7 +802,7 @@ export function PlayView() {
           const item = row.instrument ? instrumentInfo(row.instrument) : null;
           const track = row.trackId ? day.tracks.find((entry) => entry.id === row.trackId) : undefined;
           const events = track?.events ?? [];
-          const open = activeRow === row.id && writer !== "closed";
+          const open = place === "row" && activeRow === row.id && writer !== "closed";
           const hit = mixOn
             ? events.findIndex((event) => playhead >= event.time && playhead < event.time + Math.max(event.duration, 0.09))
             : -1;
@@ -737,7 +836,17 @@ export function PlayView() {
                   </svg>
                 </button>
               </div>
-              {events.length > 0 && item && (
+              {open && writer === "pick" && instrumentGrid(row.instrument)}
+              {open && writer === "roll" && (
+                <div className="row-roll">
+                  <div className="inst-row">
+                    <span className="track-name">{label}</span>
+                    {playControl}
+                  </div>
+                  {rollCard()}
+                </div>
+              )}
+              {!(open && writer === "roll") && events.length > 0 && item && (
                 <div className="lane-time">
                   {events.map((event, index) => (
                     <span
@@ -792,8 +901,8 @@ export function PlayView() {
             </div>
             <p>Everyone hears the same 20 seconds of a real song. You write your own version on the rolls. You get five tries. Your best percentage is kept.</p>
             <h3>Write on the roll</h3>
-            <p>Tap the roll to place a note. You hear it. Drag an edge to change the length. Drag a note up or down to change the pitch. On drums, that move switches the drum sound.</p>
-            <p>Play, next to the instrument name, hears only the part you are editing. Save to song keeps that part. The plus adds an empty row. Choose its instrument, then save. The same instrument can be added again. Listen plays the saved tracks together.</p>
+            <p>Tap the roll to place a note. You hear it. Drag an edge to change the length. Drag a note left or right to move it in time, and up or down to change the pitch. On drums, that move switches the drum sound.</p>
+            <p>Instrument playground is where you try a part. Save to song adds it as a row. The plus adds an empty row, and its caret chooses that row's instrument. Play, next to the instrument name, hears only the part you are editing. Listen plays the saved tracks together.</p>
             <div className="example" aria-label={`${EXAMPLE_TITLE} example`}>
               <p>A piano part saved to the song</p>
               <div className="ex-row">{Array.from({ length: 12 }, (_, index) => <span key={index} className="ex-note" />)}</div>
@@ -807,6 +916,9 @@ export function PlayView() {
               disabled={day.locked}
               onClick={() => {
                 drafts.current = {};
+                playDraft.current = [];
+                playChosen.current = false;
+                movePlace("playground");
                 activeRowRef.current = null;
                 setActiveRow(null);
                 draftRef.current = [];

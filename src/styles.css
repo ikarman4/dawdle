@@ -141,6 +141,10 @@ main {
 .mode-label:empty { display: none; }
 
 .inst-row { justify-content: space-between; }
+.playground, .row-roll { display: flex; flex-direction: column; gap: 8px; }
+.row-roll { margin-top: 6px; }
+.track .inst-grid { margin-top: 6px; }
+.part-actions .track-name { font-weight: 650; }
 .inst-toggle {
   background: transparent;
   border: 0;

@@ -43,6 +43,7 @@ async function addAndPick(page: Page, name: string) {
 async function expectStudio(page: Page) {
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
   await expectInView(page, page.getByRole("button", { name: "Play", exact: true }));
+  await expectInView(page, page.getByRole("button", { name: "Instrument playground" }));
   await expectInView(page, page.getByRole("button", { name: "Add instrument" }));
   await expectInView(page, page.getByRole("button", { name: "Submit", exact: true }));
   await expectInView(page, page.getByLabel("Volume for the song and your instruments"));
@@ -59,6 +60,19 @@ test("desktop studio path", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "How to play" })).toBeVisible();
   await page.getByRole("button", { name: "Close instructions" }).click();
   await expect(page.getByText("Add an instrument to get started.")).toBeVisible();
+  await page.getByRole("button", { name: "Instrument playground" }).click();
+  await expect(page.locator(".playground .inst-grid")).toBeVisible();
+  await expect(page.locator(".song-card .inst-grid")).toHaveCount(0);
+  await page.getByRole("button", { name: "Piano", exact: true }).click();
+  await expect(page.locator(".playground").getByTestId("instrument")).toBeVisible();
+  const playground = page.locator(".playground").getByTestId("instrument");
+  const playgroundBox = await playground.boundingBox();
+  expect(playgroundBox).toBeTruthy();
+  await page.mouse.click(playgroundBox!.x + 140, playgroundBox!.y + 36);
+  await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  await page.getByRole("button", { name: "Save to song" }).click();
+  await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();
+  await expect(page.locator(".playground").getByTestId("instrument")).toHaveCount(0);
   await expect(page.getByLabel("Tries")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Record", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Add instrument" }).click();
@@ -67,7 +81,8 @@ test("desktop studio path", async ({ page }) => {
   await expect(selects).toHaveCount(2);
   await expect(page.getByRole("listbox", { name: "Instruments" })).toHaveCount(0);
   await selects.first().click();
-  await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
+  await expect(page.locator(".song-card .inst-grid")).toBeVisible();
+  await expect(page.locator(".playground .inst-grid")).toHaveCount(0);
   await expect(page.getByTestId("instrument")).toHaveCount(0);
   const piano = page.getByRole("button", { name: "Piano", exact: true });
   await expect(piano).toContainText("🎹");
@@ -104,9 +119,10 @@ test("desktop studio path", async ({ page }) => {
   for (const name of names) {
     await expect(page.getByRole("button", { name: new RegExp(`^${name}( \\d+)? track$`) }).first()).toBeVisible();
   }
-  const already = names.filter((name) => name === "Piano").length;
-  await expect(page.locator(".track.flash-have")).toHaveCount(already);
-  await expect(page.locator(".track.flash-new")).toHaveCount(names.length - already);
+  const pianoRows = await page.getByRole("button", { name: /^Piano( \d+)? track$/ }).count();
+  const songHasPiano = names.includes("Piano");
+  await expect(page.locator(".track.flash-have")).toHaveCount(songHasPiano ? pianoRows : 0);
+  await expect(page.locator(".track.flash-new")).toHaveCount(names.length - (songHasPiano ? 1 : 0));
 });
 
 test("roll places, hears, stretches, moves, and saves piano and drums", async ({ page }) => {
