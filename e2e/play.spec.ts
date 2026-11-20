@@ -43,6 +43,9 @@ async function addAndPick(page: Page, name: string) {
 async function expectStudio(page: Page) {
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
   await expectInView(page, page.getByRole("button", { name: "Play", exact: true }));
+  await expectInView(page, page.getByLabel("Playback speed"));
+  await expect(page.getByLabel("Playback speed")).toHaveValue("1");
+  await expect(page.getByLabel("Playback speed").locator("option")).toHaveText(["0.5x", "0.75x", "1x", "1.25x", "1.5x"]);
   await expectInView(page, page.getByRole("button", { name: "Instrument playground" }));
   await expectInView(page, page.getByRole("button", { name: "Add instrument" }));
   await expectInView(page, page.getByRole("button", { name: "Submit", exact: true }));

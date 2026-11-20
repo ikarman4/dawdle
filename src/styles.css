@@ -120,6 +120,15 @@ main {
   text-transform: uppercase;
   padding: 8px 18px;
 }
+.speed {
+  flex: none;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 650;
+}
 .wave {
   position: relative;
   flex: 1;

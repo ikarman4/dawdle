@@ -89,6 +89,8 @@ export function PlayView() {
   const playChosen = useRef(false);
   const flashTimer = useRef<number | null>(null);
   const [volume, setVolume] = useState(0.85);
+  const [speed, setSpeed] = useState(1);
+  const speedRef = useRef(1);
   const [copied, setCopied] = useState(false);
   const [clipError, setClipError] = useState(false);
   const playheadRef = useRef(0);
@@ -174,6 +176,7 @@ export function PlayView() {
         setPlayhead(20);
       },
       onBeat: () => undefined,
+      rate: speedRef.current,
     });
   }
 
@@ -194,7 +197,16 @@ export function PlayView() {
     setSongPlaying(true);
     void resumeAudio();
     clip.current?.setVolume(volume);
+    clip.current?.setPlaybackRate(speedRef.current);
     clip.current?.playFrom(from);
+  }
+
+  function onSpeed(next: number) {
+    speedRef.current = next;
+    setSpeed(next);
+    clip.current?.setPlaybackRate(next);
+    if (mixOn) begin(playheadRef.current, mixEvents(day.tracks), false);
+    else if (partOn) begin(playheadRef.current, draftRef.current, false);
   }
 
   function replaceDraft(next: NoteEvent[]) {
@@ -734,6 +746,13 @@ export function PlayView() {
           {songPlaying ? "Pause" : "Play"}
         </button>
         <Waveform notes={[]} peaks={peaks} playhead={playhead} onScrub={onScrub} />
+        <select className="speed" aria-label="Playback speed" value={speed} onChange={(event) => onSpeed(Number(event.target.value))}>
+          {[0.5, 0.75, 1, 1.25, 1.5].map((rate) => (
+            <option key={rate} value={rate}>
+              {rate}x
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="vol-row">

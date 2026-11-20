@@ -318,6 +318,7 @@ export function startPlayback(options: {
   events: NoteEvent[];
   bpm: number;
   metronome: boolean;
+  rate?: number;
   onTick: (time: number) => void;
   onEnd: () => void;
   onBeat: (beat: number, accent: boolean) => void;
@@ -327,6 +328,7 @@ export function startPlayback(options: {
   session = current;
   const started = performance.now();
   const from = Math.max(0, Math.min(20, options.from));
+  const rate = options.rate && options.rate > 0 ? options.rate : 1;
   const later = (delay: number, fn: () => void) => {
     const timer = window.setTimeout(() => {
       if (current.stopped) return;
@@ -336,7 +338,7 @@ export function startPlayback(options: {
   };
   for (const event of options.events) {
     if (event.time + event.duration <= from) continue;
-    later(event.time - from, () => triggerEvent(event));
+    later((event.time - from) / rate, () => triggerEvent({ ...event, duration: event.duration / rate }));
   }
   if (options.metronome) {
     const beat = 60 / options.bpm;
@@ -344,7 +346,7 @@ export function startPlayback(options: {
       const time = index * beat;
       if (time < from - 0.02) continue;
       const accent = index % 4 === 0;
-      later(time - from, () => {
+      later((time - from) / rate, () => {
         playClick(accent);
         options.onBeat(index, accent);
       });
@@ -352,7 +354,7 @@ export function startPlayback(options: {
   }
   const loop = () => {
     if (current.stopped || session !== current) return;
-    const time = from + (performance.now() - started) / 1000;
+    const time = from + ((performance.now() - started) / 1000) * rate;
     if (time >= 20) {
       options.onTick(20);
       stopPlayback();

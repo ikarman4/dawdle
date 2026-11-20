@@ -8,6 +8,7 @@ interface YTPlayer {
   getCurrentTime: () => number;
   getDuration: () => number;
   setVolume: (volume: number) => void;
+  setPlaybackRate: (rate: number) => void;
   destroy: () => void;
 }
 
@@ -16,6 +17,7 @@ export interface ClipControl {
   pause: () => void;
   seek: (local: number) => void;
   setVolume: (value: number) => void;
+  setPlaybackRate: (rate: number) => void;
 }
 
 interface ClipPlayerProps {
@@ -66,6 +68,7 @@ export const ClipPlayer = forwardRef<ClipControl, ClipPlayerProps>(function Clip
   const offsetRef = useRef(0);
   const playingRef = useRef(false);
   const volumeRef = useRef(volume);
+  const rateRef = useRef(1);
   const dateRef = useRef(date);
   const onLocalRef = useRef(onLocal);
   const onEndedRef = useRef(onEnded);
@@ -85,6 +88,11 @@ export const ClipPlayer = forwardRef<ClipControl, ClipPlayerProps>(function Clip
       const at = offsetRef.current + Math.min(19.95, Math.max(0, local));
       player.setVolume(Math.round(volumeRef.current * 100));
       player.seekTo(at, true);
+      try {
+        player.setPlaybackRate(rateRef.current);
+      } catch {
+        /* the player applies the rate once it can */
+      }
       player.playVideo();
       playingRef.current = true;
     },
@@ -99,6 +107,14 @@ export const ClipPlayer = forwardRef<ClipControl, ClipPlayerProps>(function Clip
     setVolume(value: number) {
       volumeRef.current = value;
       playerRef.current?.setVolume(Math.round(value * 100));
+    },
+    setPlaybackRate(rate: number) {
+      rateRef.current = rate;
+      try {
+        playerRef.current?.setPlaybackRate(rate);
+      } catch {
+        /* applied again when playback starts */
+      }
     },
   }));
 
@@ -132,6 +148,11 @@ export const ClipPlayer = forwardRef<ClipControl, ClipPlayerProps>(function Clip
             const duration = event.target.getDuration();
             offsetRef.current = clipOffset(dateRef.current, duration);
             event.target.seekTo(offsetRef.current, true);
+            try {
+              event.target.setPlaybackRate(rateRef.current);
+            } catch {
+              /* the default rate remains until play */
+            }
             event.target.pauseVideo();
             event.target.setVolume(Math.round(volumeRef.current * 100));
             playerRef.current = event.target;
