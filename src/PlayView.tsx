@@ -205,7 +205,7 @@ export function PlayView() {
     speedRef.current = next;
     setSpeed(next);
     clip.current?.setPlaybackRate(next);
-    if (mixOn) begin(playheadRef.current, mixEvents(day.tracks), false);
+    if (mixOn) begin(playheadRef.current, eventsForListen(), false);
     else if (partOn) begin(playheadRef.current, draftRef.current, false);
   }
 
@@ -398,6 +398,17 @@ export function PlayView() {
     }
   }
 
+  function eventsForListen(): NoteEvent[] {
+    const open = writer !== "closed";
+    const editingId =
+      open && placeRef.current === "row" ? (rowsRef.current.find((row) => row.id === activeRowRef.current)?.trackId ?? null) : null;
+    const saved = mixEvents(day.tracks.filter((track) => track.id !== editingId));
+    if (!open) return saved;
+    const instrument = placeRef.current === "playground" && playChosen.current ? playArmed.current : armedRef.current;
+    const live = draftRef.current.map((event) => ({ ...event, instrument }));
+    return [...saved, ...live];
+  }
+
   function onListen() {
     stopSong();
     if (partOn) {
@@ -409,7 +420,7 @@ export function PlayView() {
       setMixOn(false);
       return;
     }
-    const events = mixEvents(day.tracks);
+    const events = eventsForListen();
     setMixOn(true);
     primeAudio();
     void resumeAudio().then(() => begin(0, events, false));
@@ -435,7 +446,7 @@ export function PlayView() {
     void resumeAudio().then(() => begin(0, events, false));
   }
 
-  function savePlayground() {
+  function savePlayground(keepOpen = true) {
     const events = draftRef.current;
     if (!playChosen.current || !events.length || day.locked) return;
     const instrument = playArmed.current;
@@ -446,9 +457,21 @@ export function PlayView() {
     rememberRows([...rowsRef.current, { id: rowId, instrument, trackId }]);
     playDraft.current = [];
     playChosen.current = false;
-    draftRef.current = [];
-    setDraft([]);
-    setWriter("closed");
+    if (!keepOpen) {
+      draftRef.current = [];
+      setDraft([]);
+      setWriter("closed");
+      return;
+    }
+    movePlace("row");
+    activeRowRef.current = rowId;
+    setActiveRow(rowId);
+    armedRef.current = instrument;
+    setArmed(instrument);
+    const notes = tagged.map((event) => ({ ...event }));
+    draftRef.current = notes;
+    setDraft(notes);
+    setWriter("roll");
   }
 
   function onSave() {
@@ -460,9 +483,6 @@ export function PlayView() {
       return;
     }
     persistActive();
-    draftRef.current = [];
-    setDraft([]);
-    setWriter("closed");
   }
 
   function onClear() {
@@ -497,7 +517,7 @@ export function PlayView() {
     stopSong();
     setPartOn(false);
     setMixOn(false);
-    if (placeRef.current === "playground") savePlayground();
+    if (placeRef.current === "playground") savePlayground(false);
     else persistActive();
     draftRef.current = [];
     setDraft([]);

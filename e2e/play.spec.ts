@@ -59,6 +59,16 @@ async function expectStudio(page: Page) {
 }
 
 test("desktop studio path", async ({ page }) => {
+  await page.addInitScript(() => {
+    const started = { count: 0 };
+    const original = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...args: unknown[]) {
+      started.count += 1;
+      (window as unknown as { __heard: number }).__heard = started.count;
+      return original.apply(this, args as []);
+    };
+    (window as unknown as { __heard: number }).__heard = 0;
+  });
   await page.setViewportSize({ width: 1280, height: 800 });
   await openToday(page);
   await expectStudio(page);
@@ -79,9 +89,16 @@ test("desktop studio path", async ({ page }) => {
   expect(playgroundBox).toBeTruthy();
   await page.mouse.click(playgroundBox!.x + 140, playgroundBox!.y + 36);
   await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  const unsaved = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(page.getByRole("button", { name: "Stop your song" })).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(unsaved);
+  await page.getByRole("button", { name: "Stop your song" }).click();
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();
   await expect(page.locator(".playground").getByTestId("instrument")).toHaveCount(0);
+  await expect(page.locator(".song-card").getByTestId("instrument")).toBeVisible();
+  await expect(page.getByTestId("roll-note")).toHaveCount(1);
   await expect(page.getByLabel("Tries")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Record", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Add instrument" }).click();
@@ -240,8 +257,15 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   });
   await expect.poll(async () => roll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(400);
 
+  const unsaved = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(page.getByRole("button", { name: "Stop your song" })).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(unsaved);
+  await page.getByRole("button", { name: "Stop your song" }).click();
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();
+  await expect(page.getByTestId("instrument")).toBeVisible();
+  await expect(page.getByTestId("roll-note")).toHaveCount(1);
 
   await addAndPick(page, "Piano");
   await roll.evaluate((el) => {
