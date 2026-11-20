@@ -216,10 +216,19 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   expect(Number(await page.getByTestId("roll-note").getAttribute("data-pitch"))).toBe(heldPitch);
 
   const heard = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
+  await roll.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+  });
+  expect(await roll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(200);
   await page.getByRole("button", { name: "Play this instrument" }).click();
   await expect(page.getByTestId("listen")).toHaveAttribute("data-part", "on");
+  await expect.poll(async () => roll.evaluate((el) => el.scrollLeft)).toBeLessThan(80);
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __heard: number }).__heard), { timeout: 8_000 }).toBeGreaterThan(heard);
   await page.getByRole("button", { name: "Stop this instrument" }).click();
+  await roll.evaluate((el) => {
+    el.scrollLeft = 480;
+  });
+  await expect.poll(async () => roll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(400);
 
   await page.getByRole("button", { name: "Save to song" }).click();
   await expect(page.getByRole("button", { name: "Piano track" })).toBeVisible();

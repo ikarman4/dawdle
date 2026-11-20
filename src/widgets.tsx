@@ -528,12 +528,11 @@ export function NoteRoll({
     if (!follow) return;
     const scroller = scrollRef.current;
     if (!scroller) return;
-    const x = ROLL_KEY + playhead * ROLL_PX;
-    const left = scroller.scrollLeft;
     const view = scroller.clientWidth;
-    if (x < left + ROLL_KEY + 8 || x > left + view - 28) {
-      scroller.scrollLeft = Math.max(0, x - ROLL_KEY - view * 0.3);
-    }
+    const sheet = Math.max(0, view - ROLL_KEY);
+    const target = playhead * ROLL_PX - sheet / 2;
+    const max = Math.max(0, scroller.scrollWidth - view);
+    scroller.scrollLeft = Math.min(max, Math.max(0, target));
   }, [follow, playhead]);
 
   function rowIndex(note: NoteEvent): number {

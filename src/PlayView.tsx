@@ -649,7 +649,7 @@ export function PlayView() {
           disabled={day.locked}
           step={beatSeconds(song.bpm) / 4}
           defaultDuration={beatSeconds(song.bpm)}
-          follow={partOn}
+          follow={songPlaying || mixOn || partOn}
           onChange={replaceDraft}
           onPreview={(note) => {
             primeAudio();
