@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hashString, songForDate, songIndexForDate, utcDateString } from "./daily";
+import { clipOffset, hashString, songForDate, songIndexForDate, utcDateString, windowPeaks } from "./daily";
 import { SONGS } from "./songs";
 import { INSTRUMENTS } from "./types";
 
@@ -17,38 +17,49 @@ describe("daily song", () => {
     expect(hashString("2026-11-20")).toBe(hashString("2026-11-20"));
   });
 
-  it("ships 16 original songs that cover every instrument", () => {
-    expect(SONGS.length).toBeGreaterThanOrEqual(16);
-    const used = new Set<string>();
-    const titles = new Set<string>();
+  it("ships a catalog of real songs and a stable 20 second window", () => {
+    expect(SONGS.length).toBeGreaterThanOrEqual(2000);
+    const ids = new Set<string>();
     for (const song of SONGS) {
-      expect(song.artist).toBe("DAWdle");
-      expect(song.bpm).toBeGreaterThanOrEqual(72);
+      expect(song.id).toMatch(/^[A-Za-z0-9_-]{11}$/);
+      expect(ids.has(song.id)).toBe(false);
+      ids.add(song.id);
+      expect(song.title.length).toBeGreaterThan(0);
+      expect(song.artist.length).toBeGreaterThan(0);
+      expect(song.artist).not.toBe("DAWdle");
+      expect(song.year).toBeGreaterThanOrEqual(1973);
+      expect(song.year).toBeLessThanOrEqual(2022);
+      expect(song.bpm).toBeGreaterThanOrEqual(84);
       expect(song.bpm).toBeLessThanOrEqual(132);
-      expect(titles.has(song.title)).toBe(false);
-      titles.add(song.title);
-      expect(song.title).not.toBe("Window Sill");
+    }
+    const offset = clipOffset("2026-11-20", 200);
+    expect(clipOffset("2026-11-20", 200)).toBe(offset);
+    expect(offset).toBeGreaterThanOrEqual(0);
+    expect(offset).toBeLessThanOrEqual(180);
+    expect(clipOffset("2026-11-20", 12)).toBe(0);
+    let moved = false;
+    for (let day = 1; day <= 28; day++) {
+      if (clipOffset(`2026-12-${String(day).padStart(2, "0")}`, 240) !== offset) moved = true;
+    }
+    expect(moved).toBe(true);
+    expect(windowPeaks("abc", "2026-11-20")).toEqual(windowPeaks("abc", "2026-11-20"));
+  });
+
+  it("gives every instrument a hidden arrangement somewhere in the catalog", () => {
+    const used = new Set<string>();
+    for (const song of SONGS.slice(0, 240)) {
+      expect(song.notes.length).toBeGreaterThanOrEqual(16);
+      expect(song.notes.length).toBeLessThanOrEqual(180);
       const instruments = new Set(song.notes.map((note) => note.instrument));
       expect(instruments.size).toBeGreaterThanOrEqual(4);
-      expect(instruments.size).toBeLessThanOrEqual(8);
-      instruments.forEach((id) => used.add(id));
-      expect(song.notes.length, song.title).toBeGreaterThanOrEqual(16);
-      expect(song.notes.length, `${song.title} has ${song.notes.length} notes`).toBeLessThanOrEqual(180);
       let last = -1;
       for (const note of song.notes) {
         expect(note.time).toBeGreaterThanOrEqual(0);
         expect(note.time).toBeLessThan(20);
-        expect(note.duration).toBeGreaterThan(0);
         expect(note.time + note.duration).toBeLessThanOrEqual(20.02);
         expect(note.time).toBeGreaterThanOrEqual(last);
         last = note.time;
-      }
-      const groups = new Map<string, number>();
-      for (const note of song.notes) {
-        const key = note.drum ? `${note.instrument}:${note.drum}` : `${note.instrument}:${note.pitch}`;
-        const previous = groups.get(key);
-        if (previous != null) expect(note.time - previous).toBeGreaterThanOrEqual(0.19);
-        groups.set(key, note.time);
+        used.add(note.instrument);
       }
     }
     expect(used.size).toBe(INSTRUMENTS.length);

@@ -35,8 +35,9 @@ export interface NoteEvent {
 export interface Song {
   id: string;
   title: string;
-  artist: "DAWdle";
+  artist: string;
   year: number;
+  duration: number;
   bpm: number;
   key: string;
   notes: NoteEvent[];
