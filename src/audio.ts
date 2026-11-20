@@ -100,15 +100,15 @@ function ensureBuilt() {
       vibratoRate: 4.5,
       voice0: {
         oscillator: { type: "sawtooth" },
-        envelope: { attack: 0.008, decay: 0.16, sustain: 0.22, release: 0.18 },
-        filter: { type: "lowpass", Q: 1.1, rolloff: -24 },
-        filterEnvelope: { attack: 0.008, decay: 0.18, sustain: 0.12, release: 0.16, baseFrequency: 240, octaves: 3 },
+        envelope: { attack: 0.02, decay: 0.12, sustain: 0.9, release: 0.45 },
+        filter: { type: "lowpass", Q: 0.8, rolloff: -12 },
+        filterEnvelope: { attack: 0.02, decay: 0.2, sustain: 0.75, release: 0.4, baseFrequency: 700, octaves: 1.2 },
       },
       voice1: {
         oscillator: { type: "square" },
-        envelope: { attack: 0.012, decay: 0.12, sustain: 0.16, release: 0.16 },
-        filter: { type: "lowpass", Q: 0.7, rolloff: -12 },
-        filterEnvelope: { attack: 0.01, decay: 0.14, sustain: 0.08, release: 0.14, baseFrequency: 480, octaves: 2 },
+        envelope: { attack: 0.03, decay: 0.1, sustain: 0.75, release: 0.4 },
+        filter: { type: "lowpass", Q: 0.6, rolloff: -12 },
+        filterEnvelope: { attack: 0.03, decay: 0.16, sustain: 0.65, release: 0.35, baseFrequency: 900, octaves: 1 },
       },
     }).connect(master);
     voice.voice1.oscillator.detune.value = 10;

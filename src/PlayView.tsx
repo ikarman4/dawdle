@@ -78,9 +78,11 @@ export function PlayView() {
   const [resultOpen, setResultOpen] = useState(false);
   const [namePrompt, setNamePrompt] = useState(false);
   const [hintPick, setHintPick] = useState(false);
+  const [rowFlash, setRowFlash] = useState<Record<string, "new" | "have">>({});
   const rowsRef = useRef<SongRow[]>(rowsFromTracks(day.tracks));
   const activeRowRef = useRef<string | null>(null);
   const drafts = useRef<Record<string, NoteEvent[]>>({});
+  const flashTimer = useRef<number | null>(null);
   const [volume, setVolume] = useState(0.85);
   const [copied, setCopied] = useState(false);
   const [clipError, setClipError] = useState(false);
@@ -98,6 +100,7 @@ export function PlayView() {
     return () => {
       alive.current = false;
       stopPlayback();
+      if (flashTimer.current != null) window.clearTimeout(flashTimer.current);
     };
   }, []);
 
@@ -434,10 +437,34 @@ export function PlayView() {
     setWriter("roll");
   }
 
+  function flashSongRows() {
+    const flashes: Record<string, "new" | "have"> = {};
+    let next = rowsRef.current.slice();
+    for (const id of songInstruments(song.notes)) {
+      const matches = next.filter((row) => row.instrument === id);
+      if (matches.length) {
+        for (const row of matches) flashes[row.id] = "have";
+        continue;
+      }
+      const row: SongRow = { id: newRowId(), instrument: id, trackId: null };
+      next = [...next, row];
+      flashes[row.id] = "new";
+    }
+    rememberRows(next);
+    if (flashTimer.current != null) window.clearTimeout(flashTimer.current);
+    setRowFlash(flashes);
+    flashTimer.current = window.setTimeout(() => {
+      if (!alive.current) return;
+      setRowFlash({});
+      flashTimer.current = null;
+    }, 1200);
+  }
+
   function onHint() {
     if (day.mode !== "easy" || day.locked || day.revealedAll) return;
     if (!day.instrumentsRevealed) {
       dispatch({ type: "reveal-instruments" });
+      flashSongRows();
       return;
     }
     setHintPick(true);
@@ -681,7 +708,7 @@ export function PlayView() {
             ? events.findIndex((event) => playhead >= event.time && playhead < event.time + Math.max(event.duration, 0.09))
             : -1;
           return (
-            <div className="track" key={row.id}>
+            <div className={rowFlash[row.id] ? `track flash-${rowFlash[row.id]}` : "track"} key={row.id}>
               <div className="track-head">
                 <button
                   type="button"

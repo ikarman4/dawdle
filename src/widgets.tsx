@@ -660,24 +660,33 @@ export function NoteRoll({
     event.stopPropagation();
     const originX = event.clientX;
     const originY = event.clientY;
-    const originRow = rowIndex(notesRef.current[index]);
+    const origin = notesRef.current[index];
+    const originRow = rowIndex(origin);
     let moved = false;
     let lastRow = originRow;
+    let lastTime = origin.time;
     const move = (ev: PointerEvent) => {
-      if (Math.hypot(ev.clientX - originX, ev.clientY - originY) > 5) moved = true;
-      const delta = Math.round((ev.clientY - originY) / rowH);
+      const dx = ev.clientX - originX;
+      const dy = ev.clientY - originY;
+      if (Math.hypot(dx, dy) > 5) moved = true;
+      const delta = Math.round(dy / rowH);
       const nextRow = Math.min(rows.length - 1, Math.max(0, originRow + delta));
-      if (nextRow === lastRow) return;
+      const raw = Math.abs(dx) < 4 ? origin.time : origin.time + dx / ROLL_PX;
+      const limit = Math.max(0, 20 - origin.duration);
+      const time = Math.round(Math.min(limit, snapTime(raw, step)) * 1000) / 1000;
+      if (nextRow === lastRow && time === lastTime) return;
+      const rowChanged = nextRow !== lastRow;
       lastRow = nextRow;
+      lastTime = time;
       const row = rows[nextRow];
       const current = notesRef.current[index];
       const updated: NoteEvent = row.drum
-        ? { ...current, drum: row.drum, pitch: undefined }
-        : { ...current, pitch: row.midi, drum: undefined };
+        ? { ...current, drum: row.drum, pitch: undefined, time, duration: origin.duration }
+        : { ...current, pitch: row.midi, drum: undefined, time, duration: origin.duration };
       const copy = notesRef.current.slice();
       copy[index] = updated;
       write(copy);
-      onPreview(updated);
+      if (rowChanged) onPreview(updated);
     };
     const up = () => {
       window.removeEventListener("pointermove", move);

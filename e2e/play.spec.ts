@@ -96,6 +96,17 @@ test("desktop studio path", async ({ page }) => {
   await expect(page.getByRole("listbox", { name: "Instruments" })).toHaveCount(0);
   await expect(page.getByTestId("instrument")).toBeVisible();
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
+  await page.getByRole("button", { name: "Hint" }).click();
+  const line = page.locator(".hint-line");
+  await expect(line).toContainText("In this song:");
+  const names = (await line.innerText()).replace(/^.*?:\s*/, "").split(",").map((part) => part.trim()).filter(Boolean);
+  expect(names.length).toBeGreaterThan(0);
+  for (const name of names) {
+    await expect(page.getByRole("button", { name: new RegExp(`^${name}( \\d+)? track$`) }).first()).toBeVisible();
+  }
+  const already = names.filter((name) => name === "Piano").length;
+  await expect(page.locator(".track.flash-have")).toHaveCount(already);
+  await expect(page.locator(".track.flash-new")).toHaveCount(names.length - already);
 });
 
 test("roll places, hears, stretches, moves, and saves piano and drums", async ({ page }) => {
@@ -171,6 +182,19 @@ test("roll places, hears, stretches, moves, and saves piano and drums", async ({
   await page.mouse.move(body!.x + 8, body!.y + body!.height / 2 + 42, { steps: 8 });
   await page.mouse.up();
   await expect.poll(async () => Number(await page.getByTestId("roll-note").getAttribute("data-pitch"))).toBeLessThan(pitch);
+
+  const time = Number(await page.getByTestId("roll-note").getAttribute("data-time"));
+  const held = Number(await page.getByTestId("roll-note").getAttribute("data-duration"));
+  const heldPitch = Number(await page.getByTestId("roll-note").getAttribute("data-pitch"));
+  const shifted = await page.getByTestId("roll-note").boundingBox();
+  expect(shifted).toBeTruthy();
+  await page.mouse.move(shifted!.x + 12, shifted!.y + shifted!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(shifted!.x + 112, shifted!.y + shifted!.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => Number(await page.getByTestId("roll-note").getAttribute("data-time"))).toBeGreaterThan(time + 0.4);
+  expect(Number(await page.getByTestId("roll-note").getAttribute("data-duration"))).toBeCloseTo(held, 2);
+  expect(Number(await page.getByTestId("roll-note").getAttribute("data-pitch"))).toBe(heldPitch);
 
   const heard = await page.evaluate(() => (window as unknown as { __heard: number }).__heard);
   await page.getByRole("button", { name: "Play this instrument" }).click();
