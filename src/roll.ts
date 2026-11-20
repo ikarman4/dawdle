@@ -1,5 +1,10 @@
 import type { DrumName, InstrumentId, NoteEvent } from "./types";
 
+/** Clicks on the grid keep the note. Pointer travel on a pitch key is play-along, not a place. */
+export function keepPlacedNote(fromKey: boolean): boolean {
+  return !fromKey;
+}
+
 export function eventFromPointer(input: {
   instrument: InstrumentId;
   midi?: number;

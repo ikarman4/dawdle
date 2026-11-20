@@ -486,15 +486,17 @@ export function PlayView() {
             onChange={replaceDraft}
             onPreview={(note) => {
               primeAudio();
-              void resumeAudio().then(() => triggerEvent({ ...note, duration: Math.min(0.4, Math.max(0.08, note.duration)) }));
+              triggerEvent({ ...note, duration: Math.min(0.4, Math.max(0.08, note.duration)) });
+              void resumeAudio();
             }}
             onKeyDown={(row) => {
               primeAudio();
               if (row.drum) {
-                void resumeAudio().then(() => triggerEvent({ instrument: armed, drum: row.drum, time: 0, duration: 0.12, velocity: 0.86 }));
+                triggerEvent({ instrument: armed, drum: row.drum, time: 0, duration: 0.12, velocity: 0.86 });
               } else if (row.midi != null) {
-                void resumeAudio().then(() => beginPitch(armed, row.midi!));
+                beginPitch(armed, row.midi!);
               }
+              void resumeAudio();
             }}
             onKeyUp={(row) => {
               if (row.midi != null) endPitch(armed, row.midi);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatClock } from "./daily";
 import { type GhostMark } from "./progress";
-import { eventFromPointer } from "./roll";
+import { eventFromPointer, keepPlacedNote } from "./roll";
 import { peaksFor } from "./score";
 import { DRUM_LABELS, drumsFor, instrumentInfo, noteName, type DrumName, type InstrumentId, type NoteEvent } from "./types";
 
@@ -714,13 +714,12 @@ export function NoteRoll({
     if (!row) return;
     const note = place(row, event.clientX);
     if (!note) return;
-    gesture.current.provisional = note;
     placed.current = true;
   }
 
   function onGridPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const current = gesture.current;
-    if (!current) return;
+    if (!current || keepPlacedNote(current.fromKey)) return;
     const dx = event.clientX - current.x;
     const dy = event.clientY - current.y;
     if (Math.hypot(dx, dy) < 22) return;

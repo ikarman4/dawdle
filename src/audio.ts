@@ -5,7 +5,6 @@ import { PITCHED_NOTES } from "./sample-map";
 type Sampler = Tone.Sampler;
 
 let built = false;
-let loading: Promise<void> | null = null;
 let master: Tone.Gain;
 let limiter: Tone.Limiter;
 let mix = 0.85;
@@ -15,6 +14,9 @@ const serumVoices: Tone.DuoSynth[] = [];
 const serumHeld = new Map<number, Tone.DuoSynth>();
 let serumCursor = 0;
 let click: Tone.Player;
+let pitchFallback: Tone.PolySynth;
+let drumFallback: Tone.MembraneSynth;
+let hatFallback: Tone.NoiseSynth;
 let quiet = new Set<InstrumentId>();
 
 const BASE = `${import.meta.env.BASE_URL}samples/`;
@@ -75,6 +77,9 @@ function applyQuiet() {
   for (const sampler of drums.values()) sampler.volume.value = Tone.gainToDb(0.9 * mix);
   const serumDb = Tone.gainToDb(0.42 * (quiet.has("synth") ? 0.22 : 1) * mix);
   for (const voice of serumVoices) voice.volume.value = serumDb;
+  if (pitchFallback) pitchFallback.volume.value = Tone.gainToDb(0.35 * mix);
+  if (drumFallback) drumFallback.volume.value = Tone.gainToDb(0.7 * mix);
+  if (hatFallback) hatFallback.volume.value = Tone.gainToDb(0.35 * mix);
   if (click) click.volume.value = Tone.gainToDb(0.45 * mix);
 }
 
@@ -109,9 +114,24 @@ function ensureBuilt() {
     voice.voice1.oscillator.detune.value = 10;
     serumVoices.push(voice);
   }
+  pitchFallback = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: "triangle" },
+    envelope: { attack: 0.004, decay: 0.16, sustain: 0.18, release: 0.18 },
+  }).connect(master);
+  drumFallback = new Tone.MembraneSynth({
+    octaves: 4,
+    pitchDecay: 0.05,
+    envelope: { attack: 0.001, decay: 0.22, sustain: 0, release: 0.08 },
+  }).connect(master);
+  hatFallback = new Tone.NoiseSynth({
+    envelope: { attack: 0.001, decay: 0.09, sustain: 0 },
+  }).connect(master);
   (Object.keys(PITCHED_NOTES) as (keyof typeof PITCHED_NOTES)[]).filter((id) => id !== "synth").forEach((id) => {
     const urls: Record<string, string> = {};
-    for (const note of PITCHED_NOTES[id]) urls[note] = `${id}/${note.replaceAll("#", "s")}.wav`;
+    for (const note of PITCHED_NOTES[id]) {
+      const key = note === "C10" ? "C8" : note;
+      urls[key] = `${id}/${note.replaceAll("#", "s")}.wav`;
+    }
     const sampler = new Tone.Sampler({
       urls,
       baseUrl: BASE,
@@ -130,7 +150,6 @@ function ensureBuilt() {
   }
   click = new Tone.Player(`${BASE}click.wav`).connect(master);
   built = true;
-  loading = Tone.loaded();
   applyQuiet();
 }
 
@@ -149,7 +168,6 @@ export async function resumeAudio(): Promise<boolean> {
   try {
     primeAudio();
     await Tone.start();
-    await loading;
     return true;
   } catch {
     return false;
@@ -165,11 +183,34 @@ function noteOf(pitch: number): string {
   return Tone.Frequency(pitch, "midi").toNote();
 }
 
+function samplerReady(sampler?: Sampler | null): boolean {
+  return Boolean(sampler && sampler.loaded);
+}
+
+function tapPitch(pitch: number, duration: number, when: number, velocity: number) {
+  pitchFallback.triggerAttackRelease(noteOf(pitch), Math.max(0.05, duration), when, velocity);
+}
+
+function tapDrum(drum: DrumName, time: number, velocity: number) {
+  if (drum === "kick" || drum === "tom") {
+    drumFallback.triggerAttackRelease(drum === "kick" ? "C1" : "G2", 0.2, time, velocity);
+    return;
+  }
+  hatFallback.triggerAttackRelease(drum === "openHat" ? 0.18 : 0.08, time, velocity);
+}
+
 function triggerDrum(instrument: InstrumentId, drum: DrumName, time: number, velocity: number) {
   const voice = drums.get(drumKey(instrument, drum));
-  if (!voice) return;
   const duration = drum === "openHat" ? 0.45 : drum === "kick" ? 0.28 : 0.18;
-  voice.triggerAttackRelease("C4", duration, time, velocity);
+  if (samplerReady(voice)) {
+    try {
+      voice!.triggerAttackRelease("C4", duration, time, velocity);
+      return;
+    } catch {
+      /* fall through to the oscillator hit */
+    }
+  }
+  tapDrum(drum, time, velocity);
 }
 
 function nextSerum(): Tone.DuoSynth {
@@ -183,7 +224,7 @@ function triggerSynth(pitch: number, duration: number, when: number, velocity: n
 }
 
 export function triggerEvent(event: NoteEvent, time?: number) {
-  if (!built) return;
+  ensureBuilt();
   const when = time ?? Tone.now();
   const velocity = Math.max(0.05, Math.min(1, event.velocity));
   if (event.drum && (event.instrument === "kit" || event.instrument === "machine")) {
@@ -195,18 +236,36 @@ export function triggerEvent(event: NoteEvent, time?: number) {
     triggerSynth(event.pitch, event.duration, when, velocity);
     return;
   }
-  pitched.get(event.instrument)?.triggerAttackRelease(noteOf(event.pitch), Math.max(0.05, event.duration), when, velocity);
+  const sampler = pitched.get(event.instrument);
+  if (samplerReady(sampler)) {
+    try {
+      sampler!.triggerAttackRelease(noteOf(event.pitch), Math.max(0.05, event.duration), when, velocity);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  tapPitch(event.pitch, event.duration, when, velocity);
 }
 
 export function beginPitch(instrument: InstrumentId, pitch: number, velocity = 0.8) {
-  if (!built) return;
+  ensureBuilt();
   if (instrument === "synth") {
     const voice = nextSerum();
     serumHeld.set(pitch, voice);
     voice.triggerAttack(noteOf(pitch), Tone.now(), velocity);
     return;
   }
-  pitched.get(instrument)?.triggerAttack(noteOf(pitch), Tone.now(), velocity);
+  const sampler = pitched.get(instrument);
+  if (samplerReady(sampler)) {
+    try {
+      sampler!.triggerAttack(noteOf(pitch), Tone.now(), velocity);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  pitchFallback.triggerAttack(noteOf(pitch), Tone.now(), velocity);
 }
 
 export function endPitch(instrument: InstrumentId, pitch: number) {
@@ -217,6 +276,7 @@ export function endPitch(instrument: InstrumentId, pitch: number) {
     return;
   }
   pitched.get(instrument)?.triggerRelease(noteOf(pitch), Tone.now());
+  pitchFallback.triggerRelease(noteOf(pitch), Tone.now());
 }
 
 export function playClick(accent: boolean) {

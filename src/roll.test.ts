@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eventFromPointer } from "./roll";
+import { eventFromPointer, keepPlacedNote } from "./roll";
 import type { NoteEvent } from "./types";
 
 describe("clicking the roll", () => {
@@ -21,5 +21,10 @@ describe("clicking the roll", () => {
     events.push(note!);
     expect(events[0].drum).toBe("snare");
     expect(events[0].time).toBe(1.25);
+  });
+
+  it("keeps a grid click even if the pointer moves after down", () => {
+    expect(keepPlacedNote(false)).toBe(true);
+    expect(keepPlacedNote(true)).toBe(false);
   });
 });
