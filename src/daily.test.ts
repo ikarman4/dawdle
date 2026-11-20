@@ -43,13 +43,18 @@ describe("daily song", () => {
     }
     expect(moved).toBe(true);
     expect(windowPeaks("abc", "2026-11-20")).toEqual(windowPeaks("abc", "2026-11-20"));
+    const today = songForDate("2026-11-20");
+    expect(today.notes.length).toBeGreaterThan(0);
+    expect(Math.min(...today.notes.map((note) => note.time))).toBeLessThan(1);
+    expect(Math.max(...today.notes.map((note) => note.time))).toBeGreaterThan(15);
+    expect(today.notes.every((note) => note.duration > 0 && (note.pitch != null || note.drum != null))).toBe(true);
   });
 
   it("gives every instrument a hidden arrangement somewhere in the catalog", () => {
     const used = new Set<string>();
     for (const song of SONGS.slice(0, 240)) {
       expect(song.notes.length).toBeGreaterThanOrEqual(16);
-      expect(song.notes.length).toBeLessThanOrEqual(180);
+      expect(song.notes.length).toBeLessThanOrEqual(200);
       const instruments = new Set(song.notes.map((note) => note.instrument));
       expect(instruments.size).toBeGreaterThanOrEqual(4);
       let last = -1;

@@ -1,13 +1,8 @@
-import type { Attempt, DayState, NoteEvent } from "./types";
+import type { Attempt, DayState, DrumName, InstrumentId, NoteEvent } from "./types";
 import { previousUtcDate } from "./daily";
 
-const DOCKS = [0, 4, 8, 8, 8, 15];
-
-export function dockTotal(tier: number): number {
-  const capped = Math.max(0, Math.min(5, Math.floor(tier)));
-  let sum = 0;
-  for (let i = 1; i <= capped; i++) sum += DOCKS[i];
-  return sum;
+export function dockTotal(count: number): number {
+  return Math.max(0, Math.floor(count)) * 5;
 }
 
 export function officialPercentage(bestRaw: number, docks: number): number {
@@ -22,51 +17,94 @@ export function bestAttempt(attempts: Attempt[]): Attempt | null {
   return best;
 }
 
-export function officialScore(day: Pick<DayState, "mode" | "attempts" | "hintTier">): number {
+export function officialScore(day: Pick<DayState, "mode" | "attempts" | "hintCount" | "revealedAll">): number {
   const best = bestAttempt(day.attempts);
   if (!best) return 0;
   if (day.mode === "hard") return best.raw;
-  return officialPercentage(best.raw, dockTotal(day.hintTier));
+  if (day.revealedAll) return 0;
+  return officialPercentage(best.raw, dockTotal(day.hintCount));
 }
 
-export interface SubmitOptions {
-  declineSection?: boolean;
-}
-
-export function submitAttempt(day: DayState, raw: number, events: NoteEvent[], options: SubmitOptions = {}): DayState {
+export function submitAttempt(day: DayState, raw: number, events: NoteEvent[]): DayState {
   if (day.locked || day.attempts.length >= 5) return day;
   const attempts = [...day.attempts, { raw, events }];
-  const locked = attempts.length >= 5;
-  let hintTier = day.hintTier;
-  let declinedSection = day.declinedSection;
-  if (day.mode === "easy") {
-    if (options.declineSection) {
-      declinedSection = true;
-      hintTier = Math.min(4, Math.max(hintTier, Math.min(attempts.length, 4)));
-    } else if (day.sectionFilled) {
-      hintTier = 5;
-    } else {
-      hintTier = Math.max(hintTier, Math.min(5, attempts.length));
-    }
-  }
   return {
     ...day,
     attempts,
-    locked,
-    hintTier,
-    declinedSection,
+    locked: attempts.length >= 5,
     modeLocked: true,
   };
 }
 
-export function requestHint(day: DayState): DayState {
-  if (day.mode !== "easy" || day.locked || day.hintTier >= 5 || day.sectionFilled) return day;
-  return { ...day, hintTier: day.hintTier + 1, modeLocked: true };
+export function songInstruments(notes: NoteEvent[]): InstrumentId[] {
+  const seen: InstrumentId[] = [];
+  for (const note of notes) {
+    if (!seen.includes(note.instrument)) seen.push(note.instrument);
+  }
+  return seen;
 }
 
-export function picksNeeded(tier: number): number {
-  if (tier < 2) return 0;
-  return Math.min(3, tier - 1);
+export function noteRegions(notes: NoteEvent[], instrument: InstrumentId): NoteEvent[][] {
+  const groups: NoteEvent[][] = [];
+  for (const note of notes.filter((item) => item.instrument === instrument).sort((a, b) => a.time - b.time)) {
+    const last = groups[groups.length - 1];
+    if (last && Math.abs(note.time - last[0].time) <= 0.03) last.push(note);
+    else groups.push([note]);
+  }
+  return groups;
+}
+
+export function stepsToFill(notes: NoteEvent[], instrument: InstrumentId): number {
+  return 1 + noteRegions(notes, instrument).length;
+}
+
+export function hintsComplete(notes: NoteEvent[], steps: Partial<Record<InstrumentId, number>>): boolean {
+  const ids = songInstruments(notes);
+  return ids.length > 0 && ids.every((id) => (steps[id] ?? 0) >= stepsToFill(notes, id));
+}
+
+export function revealInstruments(day: DayState): DayState {
+  if (day.mode !== "easy" || day.locked || day.instrumentsRevealed || day.revealedAll) return day;
+  return { ...day, instrumentsRevealed: true, hintCount: day.hintCount + 1, modeLocked: true };
+}
+
+export function advanceHint(day: DayState, notes: NoteEvent[], instrument: InstrumentId): DayState {
+  if (day.mode !== "easy" || day.locked || !day.instrumentsRevealed || day.revealedAll) return day;
+  if (!songInstruments(notes).includes(instrument)) return day;
+  const current = day.hintSteps[instrument] ?? 0;
+  if (current >= stepsToFill(notes, instrument)) return day;
+  const hintSteps = { ...day.hintSteps, [instrument]: current + 1 };
+  return {
+    ...day,
+    hintSteps,
+    hintCount: day.hintCount + 1,
+    revealedAll: hintsComplete(notes, hintSteps),
+    modeLocked: true,
+  };
+}
+
+export interface GhostMark {
+  time: number;
+  duration: number;
+  pitch?: number;
+  drum?: DrumName;
+  kind: "beat" | "note";
+}
+
+export function ghostsFor(notes: NoteEvent[], instrument: InstrumentId, step: number): GhostMark[] {
+  if (step <= 0) return [];
+  const regions = noteRegions(notes, instrument);
+  const ghosts: GhostMark[] = regions.map((region) => {
+    const time = region[0].time;
+    const duration = Math.max(0.12, ...region.map((note) => note.time + note.duration - time));
+    return { time, duration, kind: "beat" as const };
+  });
+  for (const region of regions.slice(0, Math.max(0, step - 1))) {
+    for (const note of region) {
+      ghosts.push({ time: note.time, duration: note.duration, pitch: note.pitch, drum: note.drum, kind: "note" });
+    }
+  }
+  return ghosts;
 }
 
 export function currentStreak(lockedDates: string[], today: string, todayLocked: boolean): number {
@@ -86,9 +124,3 @@ export function mean(values: number[]): number | null {
   return Math.round((total / values.length) * 10) / 10;
 }
 
-export function partialReference(notes: NoteEvent[], instrument: NoteEvent["instrument"]): NoteEvent[] {
-  return notes
-    .filter((note) => note.instrument === instrument)
-    .filter((_, index) => index % 10 < 3)
-    .map((note) => ({ ...note }));
-}

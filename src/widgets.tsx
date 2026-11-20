@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatClock } from "./daily";
+import { type GhostMark } from "./progress";
+import { eventFromPointer } from "./roll";
 import { peaksFor } from "./score";
 import { DRUM_LABELS, drumsFor, instrumentInfo, noteName, type DrumName, type InstrumentId, type NoteEvent } from "./types";
 
@@ -582,6 +584,7 @@ export function NoteRoll({
   instrument,
   rows,
   notes,
+  ghosts = [],
   playhead,
   disabled,
   step,
@@ -595,6 +598,7 @@ export function NoteRoll({
   instrument: InstrumentId;
   rows: RollRow[];
   notes: NoteEvent[];
+  ghosts?: GhostMark[];
   playhead: number;
   disabled: boolean;
   step: number;
@@ -608,7 +612,7 @@ export function NoteRoll({
   const scrollRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef(notes);
-  const tap = useRef<{ x: number; y: number; key: string } | null>(null);
+  const tap = useRef<{ x: number; y: number } | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const rowH = rows.some((row) => row.drum) ? 36 : 18;
 
@@ -642,15 +646,19 @@ export function NoteRoll({
     const sheet = sheetRef.current;
     if (!sheet || disabled) return;
     const time = snapTime((clientX - sheet.getBoundingClientRect().left) / ROLL_PX, step);
-    const span = row.drum ? step : Math.max(step, defaultDuration);
-    const duration = Math.round(Math.min(span, 20 - time) * 1000) / 1000;
-    if (duration < step * 0.5) return;
-    const note: NoteEvent = row.drum
-      ? { instrument, drum: row.drum, time, duration, velocity: 0.86 }
-      : { instrument, pitch: row.midi, time, duration, velocity: 0.8 };
+    const note = eventFromPointer({ instrument, midi: row.midi, drum: row.drum, time, step, beat: defaultDuration });
+    if (!note) return;
     write([...notesRef.current, note].sort((a, b) => a.time - b.time));
     setSelected(null);
     onPreview(note);
+  }
+
+  function placeAt(clientX: number, clientY: number) {
+    const sheet = sheetRef.current;
+    if (!sheet || disabled) return;
+    const rowIndex = Math.min(rows.length - 1, Math.max(0, Math.floor((clientY - sheet.getBoundingClientRect().top) / rowH)));
+    const row = rows[rowIndex];
+    if (row) place(row, clientX);
   }
 
   function onNoteDown(event: React.PointerEvent<HTMLDivElement>, index: number) {
@@ -743,24 +751,13 @@ export function NoteRoll({
         </div>
         <div className="daw-sheet" ref={sheetRef}>
           {rows.map((row) => (
-            <div
-              key={row.key}
-              className={row.black ? "daw-row black" : "daw-row"}
-              data-midi={row.midi ?? ""}
-              data-drum={row.drum ?? ""}
-              onPointerDown={(event) => {
-                if ((event.target as HTMLElement).closest("[data-note]")) return;
-                tap.current = { x: event.clientX, y: event.clientY, key: row.key };
-              }}
-              onPointerUp={(event) => {
-                const start = tap.current;
-                tap.current = null;
-                if (!start || start.key !== row.key || disabled) return;
-                if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) return;
-                place(row, event.clientX);
-              }}
-            />
+            <div key={row.key} className={row.black ? "daw-row black" : "daw-row"} data-midi={row.midi ?? ""} data-drum={row.drum ?? ""} />
           ))}
+          {ghosts
+            .filter((ghost) => ghost.kind === "beat")
+            .map((ghost, index) => (
+              <div key={`beat-${index}`} className="daw-beat" data-testid="hint-beat" style={{ left: ghost.time * ROLL_PX, width: 12 }} />
+            ))}
           {Array.from({ length: lines + 1 }, (_, index) => (
             <div
               key={index}
@@ -768,6 +765,34 @@ export function NoteRoll({
               style={{ left: index * step * ROLL_PX }}
             />
           ))}
+          <div
+            className="daw-hit"
+            onPointerDown={(event) => {
+              if (disabled || event.target !== event.currentTarget) return;
+              tap.current = { x: event.clientX, y: event.clientY };
+            }}
+            onPointerUp={(event) => {
+              const start = tap.current;
+              tap.current = null;
+              if (!start || disabled) return;
+              if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) return;
+              placeAt(event.clientX, event.clientY);
+            }}
+          />
+          {ghosts
+            .filter((ghost) => ghost.kind === "note")
+            .map((ghost, index) => {
+              const at = ghost.drum ? rows.findIndex((row) => row.drum === ghost.drum) : rows.findIndex((row) => row.midi === ghost.pitch);
+              if (at < 0) return null;
+              return (
+                <div
+                  key={`ghost-${index}`}
+                  className="daw-ghost"
+                  data-testid="hint-note"
+                  style={{ top: at * rowH + 2, height: rowH - 4, left: ghost.time * ROLL_PX, width: Math.max(10, ghost.duration * ROLL_PX) }}
+                />
+              );
+            })}
           {notes.map((note, index) => {
             const row = rowIndex(note);
             return (

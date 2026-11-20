@@ -1,5 +1,5 @@
 import { hashString } from "./hash";
-import type { DrumName, InstrumentId, NoteEvent } from "./types";
+import { instrumentInfo, type DrumName, type InstrumentId, type NoteEvent } from "./types";
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const MINOR = [0, 2, 3, 5, 7, 8, 10];
@@ -124,15 +124,15 @@ export function buildArrangement(id: string, bpm: number): NoteEvent[] {
     salt += 1;
   }
   const notes: NoteEvent[] = [];
-  const bars = Math.min(8, barsIn(bpm));
+  const bars = barsIn(bpm);
   if (drum === "kit") {
     addDrums(notes, "kit", "kick", bpm, [0, 2], bars, 0.9);
     addDrums(notes, "kit", "snare", bpm, [1, 3], bars, 0.72);
-    addDrums(notes, "kit", "closedHat", bpm, [0, 1, 2, 3], Math.min(bars, 6), 0.4);
+    addDrums(notes, "kit", "closedHat", bpm, [0, 1, 2, 3], bars, 0.4);
   } else {
     addDrums(notes, "machine", "kick", bpm, [0, 2.5], bars, 0.9);
     addDrums(notes, "machine", "snare", bpm, [1, 3], bars, 0.7);
-    addDrums(notes, "machine", "hat", bpm, [0.5, 1.5, 2.5, 3.5], Math.min(bars, 6), 0.36);
+    addDrums(notes, "machine", "hat", bpm, [0.5, 1.5, 2.5, 3.5], bars, 0.36);
   }
   const patterns: Degree[][] = [
     [0, 0, 3, 0, 4, 3, 0, 2],
@@ -140,7 +140,7 @@ export function buildArrangement(id: string, bpm: number): NoteEvent[] {
     [0, "r", 2, "r", 4, 3, 2, 0],
   ];
   chosen.forEach((instrument, index) => {
-    const low = instrument === "bass" ? root : instrument === "glock" ? root + 36 : instrument === "xylo" ? root + 24 : root + 12;
+    const low = instrumentInfo(instrument).baseMidi + (root % 12);
     addLine(notes, instrument, bpm, low, scale, patterns[index % patterns.length], index === 0 ? 2 : 1, 0.74 - index * 0.04);
   });
   return sanitize(notes);

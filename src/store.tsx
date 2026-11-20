@@ -3,12 +3,12 @@ import { utcDateString } from "./daily";
 import { songForDate } from "./daily";
 import { exampleTracks } from "./example";
 import {
+  advanceHint,
   bestAttempt,
   currentStreak,
   mean,
   officialScore,
-  partialReference,
-  requestHint,
+  revealInstruments,
   submitAttempt,
 } from "./progress";
 import { scoreArrangement } from "./score";
@@ -18,12 +18,10 @@ import {
   emptyTrack,
   freshDay,
   INSTRUMENTS,
-  SECTIONS,
   type BoardCard,
   type DayState,
   type InstrumentId,
   type NoteEvent,
-  type SectionId,
   type Track,
 } from "./types";
 
@@ -58,10 +56,9 @@ type Action =
   | { type: "solo"; instrument: InstrumentId }
   | { type: "clear"; instrument: InstrumentId }
   | { type: "load-example" }
-  | { type: "submit"; declineSection?: boolean }
-  | { type: "hint" }
-  | { type: "pick-instrument"; instrument: InstrumentId }
-  | { type: "fill-section"; section: SectionId; submit: boolean }
+  | { type: "submit" }
+  | { type: "reveal-instruments" }
+  | { type: "hint-instrument"; instrument: InstrumentId }
   | { type: "follow"; name: string }
   | { type: "unfollow"; name: string }
   | { type: "import"; card: BoardCard }
@@ -97,19 +94,30 @@ function normalizeTrack(value: Partial<Track> | undefined, index: number): Track
   };
 }
 
-function normalizeDay(value: Partial<DayState> | undefined): DayState {
+function normalizeSteps(value: unknown): Partial<Record<InstrumentId, number>> {
+  if (!value || typeof value !== "object") return {};
+  const steps: Partial<Record<InstrumentId, number>> = {};
+  for (const item of INSTRUMENTS) {
+    const raw = (value as Record<string, unknown>)[item.id];
+    if (typeof raw === "number" && raw > 0) steps[item.id] = Math.floor(raw);
+  }
+  return steps;
+}
+
+function normalizeDay(value: (Partial<DayState> & { hintTier?: number }) | undefined): DayState {
   const base = freshDay();
   if (!value || typeof value !== "object") return base;
   const tracks = Array.isArray(value.tracks) ? value.tracks.map((track, index) => normalizeTrack(track, index)).filter((track): track is Track => track != null) : [];
+  const hintCount = Number(value.hintCount ?? value.hintTier) || 0;
   return {
     ...base,
     mode: value.mode === "hard" ? "hard" : "easy",
     modeLocked: Boolean(value.modeLocked),
     attempts: Array.isArray(value.attempts) ? value.attempts : [],
-    hintTier: Number(value.hintTier) || 0,
-    hintedInstruments: Array.isArray(value.hintedInstruments) ? value.hintedInstruments : [],
-    sectionFilled: value.sectionFilled ?? null,
-    declinedSection: Boolean(value.declinedSection),
+    hintCount,
+    instrumentsRevealed: Boolean(value.instrumentsRevealed) || hintCount > 0,
+    hintSteps: normalizeSteps(value.hintSteps),
+    revealedAll: Boolean(value.revealedAll),
     locked: Boolean(value.locked),
     tracks,
     revealed: Boolean(value.revealed),
@@ -213,48 +221,15 @@ function reducer(state: GameState, action: Action): GameState {
     case "load-example":
       if (current.locked) return state;
       return commit({ ...current, tracks: exampleTracks() });
-    case "hint":
-      return commit(requestHint(current));
-    case "pick-instrument": {
-      if (current.locked || current.mode !== "easy") return state;
-      if (current.hintedInstruments.includes(action.instrument)) return state;
-      if (!song.notes.some((note) => note.instrument === action.instrument)) return state;
-      const ghosts = partialReference(song.notes, action.instrument);
-      return commit(
-        withTrack(
-          { ...current, hintedInstruments: [...current.hintedInstruments, action.instrument] },
-          action.instrument,
-          (track) => ({ ...track, events: sorted([...track.events, ...ghosts]) }),
-        ),
-      );
-    }
-    case "fill-section": {
-      if (current.locked || current.mode !== "easy" || current.sectionFilled) return state;
-      const section = SECTIONS.find((item) => item.id === action.section);
-      if (!section) return state;
-      const present = new Set(song.notes.map((note) => note.instrument));
-      let tracks = current.tracks.map((track) => ({ ...track, events: cloneNotes(track.events) }));
-      let filled = false;
-      for (const instrument of section.instruments) {
-        if (!present.has(instrument)) continue;
-        filled = true;
-        const events = song.notes.filter((note) => note.instrument === instrument).map((note) => ({ ...note }));
-        tracks = tracks.filter((track) => track.instrument !== instrument);
-        tracks = [...tracks, { ...emptyTrack(instrument), events }];
-      }
-      if (!filled) return state;
-      let day: DayState = { ...current, tracks, sectionFilled: action.section, hintTier: 5, modeLocked: true };
-      if (action.submit) {
-        const events = tracks.flatMap((track) => track.events);
-        day = submitAttempt(day, scoreArrangement(song.notes, events), cloneNotes(events));
-      }
-      return commit(day);
-    }
+    case "reveal-instruments":
+      return commit(revealInstruments(current));
+    case "hint-instrument":
+      return commit(advanceHint(current, song.notes, action.instrument));
     case "submit": {
       if (current.locked || current.attempts.length >= 5) return state;
       const events = current.tracks.flatMap((track) => cloneNotes(track.events));
       const raw = scoreArrangement(song.notes, events);
-      return commit(submitAttempt(current, raw, events, { declineSection: action.declineSection }));
+      return commit(submitAttempt(current, raw, events));
     }
     case "follow": {
       const name = action.name.trim();

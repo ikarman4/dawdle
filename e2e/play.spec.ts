@@ -18,7 +18,7 @@ async function openToday(page: Page) {
   const how = page.getByRole("dialog", { name: "How to play" });
   await expect(how).toBeVisible();
   await expect(how.getByText("Everyone hears the same 20 seconds")).toBeVisible();
-  await expect(how.getByText("The song stays quiet while you record.")).toBeVisible();
+  await expect(how.getByText("Tap the roll to place a note.")).toBeVisible();
   await page.getByRole("button", { name: "Let's play" }).click();
   await expect(how).toBeHidden();
 }
@@ -41,15 +41,21 @@ test("desktop studio path", async ({ page }) => {
   await page.getByRole("button", { name: "How to play" }).click();
   await expect(page.getByRole("dialog", { name: "How to play" })).toBeVisible();
   await page.getByRole("button", { name: "Close instructions" }).click();
+  await expect(page.getByText("Add an instrument to get started.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Record", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Select instrument" }).click();
+  await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
+  await expect(page.getByTestId("instrument")).toHaveCount(0);
   await page.getByRole("button", { name: "Piano", exact: true }).click();
   await expect(page.getByTestId("instrument")).toBeVisible();
-  await page.getByRole("button", { name: "Record", exact: true }).click();
-  await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "count");
-  await expect(page.getByTestId("mode-label")).toContainText("Count");
-  await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "record", { timeout: 8_000 });
-  await expect(page.getByTestId("mode-label")).toContainText("Recording. The song is paused.");
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  const roll = page.getByTestId("instrument");
+  const box = await roll.boundingBox();
+  expect(box).toBeTruthy();
+  await page.mouse.click(box!.x + 160, box!.y + 24);
+  await expect(page.getByTestId("roll-note")).toHaveCount(1);
+  await page.getByRole("button", { name: "Add instrument" }).click();
+  await expect(page.getByRole("listbox", { name: "Instruments" })).toBeVisible();
+  await expect(page.getByTestId("instrument")).toHaveCount(0);
   await expect(page.getByTestId("listen")).toHaveAttribute("data-mode", "listen");
 });
 

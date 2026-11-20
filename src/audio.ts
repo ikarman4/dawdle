@@ -11,6 +11,9 @@ let limiter: Tone.Limiter;
 let mix = 0.85;
 const pitched = new Map<InstrumentId, Sampler>();
 const drums = new Map<string, Sampler>();
+const serumVoices: Tone.DuoSynth[] = [];
+const serumHeld = new Map<number, Tone.DuoSynth>();
+let serumCursor = 0;
 let click: Tone.Player;
 let quiet = new Set<InstrumentId>();
 
@@ -70,6 +73,8 @@ function applyQuiet() {
     sampler.volume.value = Tone.gainToDb(GAIN[id] * ducked * mix);
   }
   for (const sampler of drums.values()) sampler.volume.value = Tone.gainToDb(0.9 * mix);
+  const serumDb = Tone.gainToDb(0.42 * (quiet.has("synth") ? 0.22 : 1) * mix);
+  for (const voice of serumVoices) voice.volume.value = serumDb;
   if (click) click.volume.value = Tone.gainToDb(0.45 * mix);
 }
 
@@ -83,7 +88,28 @@ function ensureBuilt() {
   if (built) return;
   limiter = new Tone.Limiter(-1).toDestination();
   master = new Tone.Gain(mix).connect(limiter);
-  (Object.keys(PITCHED_NOTES) as (keyof typeof PITCHED_NOTES)[]).forEach((id) => {
+  for (let index = 0; index < 6; index += 1) {
+    const voice = new Tone.DuoSynth({
+      harmonicity: 1,
+      vibratoAmount: 0.06,
+      vibratoRate: 4.5,
+      voice0: {
+        oscillator: { type: "sawtooth" },
+        envelope: { attack: 0.008, decay: 0.16, sustain: 0.22, release: 0.18 },
+        filter: { type: "lowpass", Q: 1.1, rolloff: -24 },
+        filterEnvelope: { attack: 0.008, decay: 0.18, sustain: 0.12, release: 0.16, baseFrequency: 240, octaves: 3 },
+      },
+      voice1: {
+        oscillator: { type: "square" },
+        envelope: { attack: 0.012, decay: 0.12, sustain: 0.16, release: 0.16 },
+        filter: { type: "lowpass", Q: 0.7, rolloff: -12 },
+        filterEnvelope: { attack: 0.01, decay: 0.14, sustain: 0.08, release: 0.14, baseFrequency: 480, octaves: 2 },
+      },
+    }).connect(master);
+    voice.voice1.oscillator.detune.value = 10;
+    serumVoices.push(voice);
+  }
+  (Object.keys(PITCHED_NOTES) as (keyof typeof PITCHED_NOTES)[]).filter((id) => id !== "synth").forEach((id) => {
     const urls: Record<string, string> = {};
     for (const note of PITCHED_NOTES[id]) urls[note] = `${id}/${note.replaceAll("#", "s")}.wav`;
     const sampler = new Tone.Sampler({
@@ -135,6 +161,16 @@ function triggerDrum(instrument: InstrumentId, drum: DrumName, time: number, vel
   voice.triggerAttackRelease("C4", duration, time, velocity);
 }
 
+function nextSerum(): Tone.DuoSynth {
+  const voice = serumVoices[serumCursor % serumVoices.length];
+  serumCursor += 1;
+  return voice;
+}
+
+function triggerSynth(pitch: number, duration: number, when: number, velocity: number) {
+  nextSerum().triggerAttackRelease(noteOf(pitch), Math.max(0.05, duration), when, velocity);
+}
+
 export function triggerEvent(event: NoteEvent, time?: number) {
   if (!built) return;
   const when = time ?? Tone.now();
@@ -144,16 +180,31 @@ export function triggerEvent(event: NoteEvent, time?: number) {
     return;
   }
   if (typeof event.pitch !== "number") return;
+  if (event.instrument === "synth") {
+    triggerSynth(event.pitch, event.duration, when, velocity);
+    return;
+  }
   pitched.get(event.instrument)?.triggerAttackRelease(noteOf(event.pitch), Math.max(0.05, event.duration), when, velocity);
 }
 
 export function beginPitch(instrument: InstrumentId, pitch: number, velocity = 0.8) {
   if (!built) return;
+  if (instrument === "synth") {
+    const voice = nextSerum();
+    serumHeld.set(pitch, voice);
+    voice.triggerAttack(noteOf(pitch), Tone.now(), velocity);
+    return;
+  }
   pitched.get(instrument)?.triggerAttack(noteOf(pitch), Tone.now(), velocity);
 }
 
 export function endPitch(instrument: InstrumentId, pitch: number) {
   if (!built) return;
+  if (instrument === "synth") {
+    serumHeld.get(pitch)?.triggerRelease(Tone.now());
+    serumHeld.delete(pitch);
+    return;
+  }
   pitched.get(instrument)?.triggerRelease(noteOf(pitch), Tone.now());
 }
 
@@ -167,6 +218,8 @@ export function releaseAll() {
   if (!built) return;
   for (const sampler of pitched.values()) sampler.releaseAll();
   for (const sampler of drums.values()) sampler.releaseAll();
+  for (const voice of serumVoices) voice.triggerRelease();
+  serumHeld.clear();
 }
 
 interface Session {

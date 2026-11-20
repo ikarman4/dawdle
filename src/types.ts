@@ -61,10 +61,10 @@ export interface DayState {
   mode: "easy" | "hard";
   modeLocked: boolean;
   attempts: Attempt[];
-  hintTier: number;
-  hintedInstruments: InstrumentId[];
-  sectionFilled: SectionId | null;
-  declinedSection: boolean;
+  hintCount: number;
+  instrumentsRevealed: boolean;
+  hintSteps: Partial<Record<InstrumentId, number>>;
+  revealedAll: boolean;
   locked: boolean;
   tracks: Track[];
   revealed: boolean;
@@ -144,15 +144,28 @@ export function noteName(midi: number): string {
   return `${name}${octave}`;
 }
 
+export const INSTRUMENT_EMOJI: Record<InstrumentId, string> = {
+  piano: "🎹",
+  synth: "🎛️",
+  guitar: "🎸",
+  bass: "🎸",
+  ukulele: "🪕",
+  violin: "🎻",
+  kit: "🥁",
+  machine: "🤖",
+  glock: "🔔",
+  xylo: "🎶",
+};
+
 export function freshDay(): DayState {
   return {
     mode: "easy",
     modeLocked: false,
     attempts: [],
-    hintTier: 0,
-    hintedInstruments: [],
-    sectionFilled: null,
-    declinedSection: false,
+    hintCount: 0,
+    instrumentsRevealed: false,
+    hintSteps: {},
+    revealedAll: false,
     locked: false,
     tracks: [],
     revealed: false,
