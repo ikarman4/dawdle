@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   beginPitch,
   endPitch,
   playClick,
   releaseAll,
   resumeAudio,
+  setMixVolume,
   setQuietInstruments,
   startPlayback,
   stopPlayback,
   triggerEvent,
 } from "./audio";
-import { beatSeconds, formatClock, quantizeTime, songForDate } from "./daily";
+import { ClipPlayer, type ClipControl } from "./ClipPlayer";
+import { beatSeconds, formatClock, quantizeTime, songForDate, windowPeaks } from "./daily";
 import { EXAMPLE_TITLE } from "./example";
 import { calmLine } from "./score";
 import { bestAttempt, dockTotal, officialScore, picksNeeded } from "./progress";
@@ -29,50 +31,13 @@ import {
   type SectionId,
   type Track,
 } from "./types";
-import { DrumGrid, Keyboard, Pads, Timeline, Waveform } from "./widgets";
+import { DrumGrid, Keyboard, Pads, Waveform } from "./widgets";
 
 const KEY_OFFSET: Record<string, number> = {
-  a: 0,
-  w: 1,
-  s: 2,
-  e: 3,
-  d: 4,
-  f: 5,
-  t: 6,
-  g: 7,
-  y: 8,
-  h: 9,
-  u: 10,
-  j: 11,
-  k: 12,
-  o: 13,
-  l: 14,
-  p: 15,
-  ";": 16,
-  "'": 17,
+  a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ";": 16, "'": 17,
 };
-
-const KIT_KEYS: Record<string, DrumName> = {
-  a: "kick",
-  s: "snare",
-  d: "closedHat",
-  f: "openHat",
-  g: "tom",
-  h: "clap",
-};
+const KIT_KEYS: Record<string, DrumName> = { a: "kick", s: "snare", d: "closedHat", f: "openHat", g: "tom", h: "clap" };
 const MACHINE_KEYS: Record<string, DrumName> = { a: "kick", s: "snare", d: "hat", f: "clap" };
-
-function useDesktop() {
-  const [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 960px)").matches);
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 960px)");
-    const apply = () => setDesktop(media.matches);
-    apply();
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
-  }, []);
-  return desktop;
-}
 
 function mixEvents(tracks: Track[]): NoteEvent[] {
   const soloing = tracks.some((track) => track.solo);
@@ -84,38 +49,45 @@ function typingTarget(target: EventTarget | null): boolean {
   return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 }
 
+function square(raw: number): string {
+  if (raw >= 80) return "🟩";
+  if (raw >= 40) return "🟨";
+  return "⬛";
+}
+
 export function PlayView() {
   const { state, day, dispatch, streak } = useGame();
   const song = songForDate(state.today);
-  const desktop = useDesktop();
+  const clip = useRef<ClipControl>(null);
   const [playhead, setPlayhead] = useState(0);
-  const [playing, setPlaying] = useState(false);
+  const [songPlaying, setSongPlaying] = useState(false);
   const [recording, setRecording] = useState(false);
   const [counting, setCounting] = useState(false);
-  const [hear, setHear] = useState(true);
-  const [metronome, setMetronome] = useState(false);
-  const [countIn, setCountIn] = useState(false);
-  const [quantize, setQuantize] = useState(false);
+  const [count, setCount] = useState(4);
   const [armed, setArmed] = useState<InstrumentId>("piano");
   const [latched, setLatched] = useState<number | null>(null);
   const [latchedDrum, setLatchedDrum] = useState<DrumName | null>("kick");
   const [heldNotes, setHeldNotes] = useState<number[]>([]);
-  const [sheet, setSheet] = useState(false);
-  const [lamp, setLamp] = useState({ on: false, accent: false });
-  const [needName, setNeedName] = useState(false);
+  const [instrumentsOpen, setInstrumentsOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
+  const [namePrompt, setNamePrompt] = useState(false);
   const [replacePrompt, setReplacePrompt] = useState(false);
   const [sectionPrompt, setSectionPrompt] = useState<null | "hint" | "submit">(null);
-  const [shareUrl, setShareUrl] = useState("");
+  const [pickPrompt, setPickPrompt] = useState(false);
+  const [volume, setVolume] = useState(0.85);
+  const [quantize, setQuantize] = useState(true);
   const [copied, setCopied] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [clipError, setClipError] = useState(false);
   const playheadRef = useRef(0);
   const held = useRef<Map<string, number>>(new Map());
   const alive = useRef(true);
   const cancelCount = useRef(false);
-  const nameRef = useRef<HTMLInputElement>(null);
-  const wasPlaying = useRef(false);
+  const scrubOrigin = useRef(0);
+  const songPlayingRef = useRef(false);
+  const wasLocked = useRef(day.locked);
   const info = instrumentInfo(armed);
-  const songInstruments = new Set(song.notes.map((note) => note.instrument));
+  const peaks = useMemo(() => windowPeaks(song.id, state.today, 120), [song.id, state.today]);
+  const mode = counting ? "count" : recording ? "record" : "listen";
 
   useEffect(() => {
     alive.current = true;
@@ -130,21 +102,41 @@ export function PlayView() {
   }, [playhead]);
 
   useEffect(() => {
-    const quiet =
-      day.mode === "easy" && day.hintTier >= 1
-        ? INSTRUMENTS.map((item) => item.id).filter((id) => !songInstruments.has(id))
-        : [];
-    setQuietInstruments(quiet);
-  }, [day.mode, day.hintTier, song.id, songInstruments]);
+    songPlayingRef.current = songPlaying;
+  }, [songPlaying]);
 
   useEffect(() => {
-    if (day.mode === "easy" && !day.locked && day.hintedInstruments.length < picksNeeded(day.hintTier)) {
-      setSectionPrompt(null);
-    }
-  }, [day.mode, day.locked, day.hintTier, day.hintedInstruments.length]);
+    setMixVolume(volume);
+    clip.current?.setVolume(volume);
+  }, [volume]);
+
+  useEffect(() => {
+    const present = new Set(song.notes.map((note) => note.instrument));
+    const next = day.mode === "easy" && day.hintTier >= 1 ? INSTRUMENTS.map((item) => item.id).filter((id) => !present.has(id)) : [];
+    setQuietInstruments(next);
+  }, [day.mode, day.hintTier, song]);
+
+  useEffect(() => {
+    if (!wasLocked.current && day.locked) setResultOpen(true);
+    wasLocked.current = day.locked;
+  }, [day.locked]);
+
+  useEffect(() => {
+    if (!state.tutorialOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dispatch({ type: "set-tutorial", open: false });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state.tutorialOpen, dispatch]);
+
+  function stopSong() {
+    songPlayingRef.current = false;
+    setSongPlaying(false);
+    clip.current?.pause();
+  }
 
   function begin(from: number, events: NoteEvent[], withClick: boolean) {
-    setPlaying(true);
     startPlayback({
       from,
       events,
@@ -157,65 +149,64 @@ export function PlayView() {
       },
       onEnd: () => {
         if (!alive.current) return;
-        setPlaying(false);
         setRecording(false);
         playheadRef.current = 20;
         setPlayhead(20);
       },
-      onBeat: (_beat, accent) => {
-        if (!alive.current) return;
-        setLamp({ on: true, accent });
-        window.setTimeout(() => {
-          if (alive.current) setLamp({ on: false, accent: false });
-        }, 100);
-      },
+      onBeat: () => undefined,
     });
   }
 
-  async function onPlay() {
-    if (!day.revealed) dispatch({ type: "reveal" });
-    await resumeAudio();
-    if (playing || recording || counting) {
+  function onPlay() {
+    if (recording || counting) {
       cancelCount.current = true;
       stopPlayback();
-      setPlaying(false);
       setRecording(false);
       setCounting(false);
+      return;
+    }
+    if (songPlaying) {
+      stopSong();
       return;
     }
     const from = playhead >= 19.9 ? 0 : playhead;
     playheadRef.current = from;
     setPlayhead(from);
-    begin(from, hear ? song.notes : mixEvents(day.tracks), metronome);
+    songPlayingRef.current = true;
+    setSongPlaying(true);
+    void resumeAudio();
+    clip.current?.setVolume(volume);
+    clip.current?.playFrom(from);
   }
 
-  async function startRecord(mode: "replace" | "overdub") {
+  async function startRecord(take: "replace" | "overdub") {
     if (day.locked) return;
+    stopSong();
     cancelCount.current = false;
     await resumeAudio();
-    const existing = mixEvents(day.tracks).filter((event) => mode === "overdub" || event.instrument !== armed);
-    if (mode === "replace") dispatch({ type: "clear", instrument: armed });
+    const existing = mixEvents(day.tracks).filter((event) => take === "overdub" || event.instrument !== armed);
+    if (take === "replace") dispatch({ type: "clear", instrument: armed });
     stopPlayback();
     setPlayhead(0);
     playheadRef.current = 0;
-    setMetronome(true);
-    if (countIn) {
-      setCounting(true);
-      const beat = beatSeconds(song.bpm);
-      for (let index = 0; index < 4; index++) {
-        if (cancelCount.current) {
-          setCounting(false);
-          return;
-        }
-        playClick(index === 0);
-        setLamp({ on: true, accent: index === 0 });
-        await new Promise((resolve) => window.setTimeout(resolve, beat * 1000));
+    setCounting(true);
+    const beat = beatSeconds(song.bpm);
+    for (let index = 0; index < 4; index++) {
+      if (cancelCount.current) {
+        setCounting(false);
+        return;
       }
-      setCounting(false);
-      if (cancelCount.current) return;
+      setCount(4 - index);
+      playClick(index === 0);
+      await new Promise((resolve) => window.setTimeout(resolve, beat * 1000));
     }
+    if (cancelCount.current || !alive.current) {
+      setCounting(false);
+      return;
+    }
+    setCounting(false);
     setRecording(true);
-    begin(0, [...(hear ? song.notes : []), ...existing], true);
+    begin(0, existing, true);
   }
 
   function onRecord() {
@@ -223,10 +214,9 @@ export function PlayView() {
     if (recording || counting) {
       cancelCount.current = true;
       stopPlayback();
+      releaseAll();
       setRecording(false);
       setCounting(false);
-      setPlaying(false);
-      releaseAll();
       return;
     }
     const track = day.tracks.find((item) => item.instrument === armed);
@@ -274,7 +264,7 @@ export function PlayView() {
   }
 
   function dropAt(time: number) {
-    if (day.locked) return;
+    if (day.locked || recording || counting) return;
     const when = quantizeTime(time, song.bpm, quantize);
     if (info.kind === "drum") {
       const drum = latchedDrum ?? drumsFor(armed)[0];
@@ -296,24 +286,17 @@ export function PlayView() {
   }
 
   function onScrub(time: number, phase: "down" | "move" | "up") {
-    if (phase === "down") {
-      wasPlaying.current = playing && !recording;
-      if (playing) {
-        stopPlayback();
-        setPlaying(false);
-      }
-    }
+    if (recording || counting) return;
+    if (phase === "down") scrubOrigin.current = time;
     playheadRef.current = time;
     setPlayhead(time);
-    if (phase === "up" && wasPlaying.current) {
-      wasPlaying.current = false;
-      void resumeAudio().then(() => begin(time, hear ? song.notes : mixEvents(day.tracks), metronome));
-    }
+    if (songPlaying) clip.current?.seek(time);
+    if (phase === "up" && !songPlaying && Math.abs(time - scrubOrigin.current) < 0.45) dropAt(time);
   }
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.repeat || typingTarget(event.target) || day.locked) return;
+      if (event.repeat || typingTarget(event.target) || day.locked || state.tutorialOpen) return;
       if (info.kind === "drum") {
         const map = armed === "machine" ? MACHINE_KEYS : KIT_KEYS;
         const drum = map[event.key.toLowerCase()];
@@ -341,15 +324,34 @@ export function PlayView() {
     };
   });
 
-  function choose(id: InstrumentId) {
-    setArmed(id);
-    if (!desktop) setSheet(false);
-    if (instrumentInfo(id).kind === "drum") setLatched(null);
+  function finishSubmit(declineSection = false) {
+    if (day.mode === "easy" && day.attempts.length === 4 && !day.sectionFilled && !day.declinedSection && !declineSection) {
+      setSectionPrompt("submit");
+      return;
+    }
+    dispatch({ type: "submit", declineSection });
+  }
+
+  function onSubmit() {
+    if (day.locked || day.attempts.length >= 5) return;
+    cancelCount.current = true;
+    stopPlayback();
+    stopSong();
+    setRecording(false);
+    setCounting(false);
+    if (!nameReady(state.username)) {
+      setNamePrompt(true);
+      return;
+    }
+    finishSubmit();
   }
 
   function onHint() {
     if (day.mode !== "easy" || day.locked || day.sectionFilled) return;
-    if (day.hintedInstruments.length < picksNeeded(day.hintTier)) return;
+    if (day.hintedInstruments.length < picksNeeded(day.hintTier)) {
+      setPickPrompt(true);
+      return;
+    }
     if (day.hintTier >= 4) {
       setSectionPrompt("hint");
       return;
@@ -357,145 +359,288 @@ export function PlayView() {
     dispatch({ type: "hint" });
   }
 
-  function onSubmit() {
-    if (day.locked || day.attempts.length >= 5) return;
-    if (!nameReady(state.username)) {
-      setNeedName(true);
-      nameRef.current?.focus();
-      return;
-    }
-    setNeedName(false);
-    if (day.mode === "easy" && day.attempts.length === 4 && !day.sectionFilled && !day.declinedSection) {
-      setSectionPrompt("submit");
-      return;
-    }
-    dispatch({ type: "submit" });
-  }
-
-  const armedTrack = day.tracks.find((track) => track.instrument === armed);
-  const timelineEvents = armedTrack?.events ?? [];
+  const armedCount = day.tracks.find((track) => track.instrument === armed)?.events.length ?? 0;
   const docks = day.mode === "easy" ? dockTotal(day.hintTier) : 0;
   const official = day.attempts.length ? officialScore(day) : null;
   const best = bestAttempt(day.attempts);
   const calm = official != null && best ? calmLine(official, song.notes, best.events) : "";
   const nextDock = [4, 8, 8, 8, 15][Math.min(4, day.hintTier)] ?? 15;
   const picksOpen = day.mode === "easy" && !day.locked && day.hintedInstruments.length < picksNeeded(day.hintTier);
+  const songInstruments = new Set(song.notes.map((note) => note.instrument));
   const choices = INSTRUMENTS.filter((item) => songInstruments.has(item.id) && !day.hintedInstruments.includes(item.id));
-  const shareCard = day.locked && best && state.username
-    ? {
-        id: `you:${state.today}`,
-        username: state.username.trim(),
-        score: official ?? 0,
-        date: state.today,
-        bpm: song.bpm,
-        title: song.title,
-        events: best.events,
-        follows: state.follows,
-        source: "you" as const,
-        locked: true,
-      }
-    : null;
+  const shareCard =
+    day.locked && best && state.username
+      ? {
+          id: `you:${state.today}`,
+          username: state.username.trim(),
+          score: official ?? 0,
+          date: state.today,
+          bpm: song.bpm,
+          title: song.title,
+          events: best.events,
+          follows: state.follows,
+          source: "you" as const,
+          locked: true,
+        }
+      : null;
+  const shareUrl = shareCard ? `${location.origin}${location.pathname}${location.search}#${shareHash(shareCard)}` : "";
+  const resultCopy = shareCard ? `DAWdle ${state.today}\n${shareCard.score}%\n${day.attempts.map((attempt) => square(attempt.raw)).join("")}\n${shareUrl}` : "";
+  const status = counting ? `Count ${count}` : recording ? "Recording. The song is paused." : songPlaying ? "Listening" : "Ready";
 
-  async function share() {
-    if (!shareCard) return;
-    const url = `${location.origin}${location.pathname}${location.search}#${shareHash(shareCard)}`;
-    setShareUrl(url);
+  async function copyResult() {
+    if (!resultCopy) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(resultCopy);
       setCopied(true);
     } catch {
       setCopied(false);
     }
   }
 
-  const recordLabel = counting ? "Count-in" : recording ? "Stop recording" : "Record";
-
   return (
-    <div className="studio">
+    <div className="studio" data-mode={mode} data-testid="listen">
       <header className="header">
         <div>
           <h1 className="wordmark">DAWdle</h1>
-          <p className="date">{state.today} UTC</p>
+          <p className="date">{state.today} UTC · Streak {streak}</p>
         </div>
-        <div className="status">
-          <p className="score-num" data-testid="score">
-            {official == null ? "–" : `${official}%`}
-          </p>
-          <p className="streak">Streak {streak}</p>
-          {docks > 0 && <p className="docks">hints −{docks}</p>}
+        <div className="header-actions">
+          <div role="radiogroup" aria-label="Mode">
+            <button type="button" role="radio" aria-checked={day.mode === "easy"} aria-label="Easy. Hints lower your score." disabled={day.modeLocked} onClick={() => dispatch({ type: "set-mode", mode: "easy" })}>
+              Easy
+            </button>
+            <button type="button" role="radio" aria-checked={day.mode === "hard"} aria-label="Hard. Percentage only." disabled={day.modeLocked} onClick={() => dispatch({ type: "set-mode", mode: "hard" })}>
+              Hard
+            </button>
+          </div>
+          {day.mode === "easy" && !day.locked && !day.sectionFilled && day.hintTier < 5 && (
+            <button type="button" onClick={onHint}>
+              {picksOpen ? "Pick a hint" : `Hint (−${nextDock})`}
+            </button>
+          )}
+          <button type="button" aria-label="How to play" onClick={() => dispatch({ type: "set-tutorial", open: true })}>
+            Info
+          </button>
+          {day.locked && (
+            <button type="button" onClick={() => setResultOpen(true)}>
+              Result
+            </button>
+          )}
         </div>
       </header>
 
-      <section className="wave-block">
-        <Waveform notes={song.notes} playhead={playhead} onScrub={onScrub} />
-        <p className="time" data-testid="time-readout" data-seconds={playhead.toFixed(3)}>
-          {formatClock(playhead)} / 0:20
-        </p>
-        {day.revealed ? (
-          <p className="meta">
-            {song.title} · {song.year} · {song.bpm} BPM · {song.key} · 0:20
-          </p>
-        ) : (
-          <p className="meta">Press play to hear today's song.</p>
-        )}
-        {notice && <p>{notice}</p>}
-        {calm && (
-          <p className="calm" aria-live="polite">
-            {calm}
-          </p>
-        )}
-      </section>
+      <p className="meta">
+        {song.title}
+        <span>
+          {song.artist} · {song.year}
+        </span>
+      </p>
+      <p className={`mode-label mode-${mode}`} data-testid="mode-label">
+        {status}
+        {official != null ? ` · ${official}%` : ""}
+        {docks > 0 ? ` · hints −${docks}` : ""}
+      </p>
+      <Waveform notes={[]} peaks={peaks} playhead={playhead} onScrub={onScrub} />
+      <p className="time">
+        {formatClock(playhead)} / 0:20
+        {clipError ? " · This video cannot be embedded. You can still play your version." : ""}
+      </p>
 
-      <div className="transport">
-        <button type="button" className="play" aria-label={playing ? "Pause" : "Play"} onClick={() => void onPlay()}>
-          {playing ? "Pause" : "Play"}
+      <ClipPlayer
+        ref={clip}
+        videoId={song.id}
+        date={state.today}
+        volume={volume}
+        hidden={mode !== "listen"}
+        onLocal={(seconds) => {
+          if (!songPlayingRef.current) return;
+          playheadRef.current = seconds;
+          setPlayhead(seconds);
+        }}
+        onEnded={() => {
+          songPlayingRef.current = false;
+          setSongPlaying(false);
+        }}
+        onReady={() => setClipError(false)}
+        onError={() => setClipError(true)}
+      />
+
+      <div className="stage">
+        {counting && (
+          <p className="count-num" aria-live="assertive">
+            {count}
+          </p>
+        )}
+        <div data-testid="instrument">
+          {info.kind === "pitched" ? (
+            <Keyboard base={info.baseMidi} latched={latched} held={heldNotes} barred={armed === "glock" || armed === "xylo"} onDown={pitchDown} onUp={pitchUp} />
+          ) : (
+            <Pads drums={drumsFor(armed)} latched={latchedDrum} onHit={drumHit} />
+          )}
+        </div>
+        <p className="latch">
+          {info.kind === "drum"
+            ? `${DRUM_LABELS[latchedDrum ?? drumsFor(armed)[0]]} is selected. Tap the wave to place one hit.`
+            : latched == null
+              ? "Tap a key, then tap the wave to place that note."
+              : `${noteName(latched)} is selected. Tap the wave to place it.`}
+          <span data-testid={`count-${armed}`}> {armedCount} notes</span>
+        </p>
+        <label className="snap">
+          <input type="checkbox" checked={quantize} onChange={(event) => setQuantize(event.target.checked)} />
+          Snap to the beat. Notes land on the count.
+        </label>
+        {info.kind === "drum" && (
+          <details>
+            <summary>Pattern. Tap the boxes, then repeat them for all 20 seconds.</summary>
+            <DrumGrid key={armed} instrument={armed} bpm={song.bpm} onLoop={(events) => dispatch({ type: "add-events", instrument: armed, events })} />
+          </details>
+        )}
+      </div>
+
+      <div className="dock" data-testid="controls">
+        <label className="volume">
+          <span>Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(volume * 100)}
+            aria-label="Volume for the song and your instruments"
+            onChange={(event) => setVolume(Number(event.target.value) / 100)}
+          />
+        </label>
+        <button type="button" className="play" onClick={onPlay}>
+          {songPlaying ? "Pause" : "Play"}
         </button>
-        <button type="button" className={recording ? "record is-on" : "record"} aria-label={recordLabel} onClick={onRecord} disabled={day.locked}>
-          {counting ? "Count-in" : recording ? "Recording" : "Record"}
+        <button type="button" className={mode === "listen" ? "record" : "record is-on"} onClick={onRecord} disabled={day.locked}>
+          {counting ? "Count" : recording ? "Stop" : "Record"}
         </button>
-        <span className={lamp.on ? (lamp.accent ? "lamp accent" : "lamp on") : "lamp"} aria-hidden="true" />
-        <button type="button" aria-pressed={hear} onClick={() => setHear((value) => !value)}>
-          Hear the song
+        <button type="button" className="instrument" aria-label={`Instrument, ${info.name}`} onClick={() => setInstrumentsOpen(true)}>
+          {info.name}
         </button>
-        <button type="button" aria-pressed={metronome} onClick={() => setMetronome((value) => !value)}>
-          Metronome
-        </button>
-        <button type="button" aria-pressed={countIn} onClick={() => setCountIn((value) => !value)}>
-          Count-in
-        </button>
-        <button type="button" aria-pressed={quantize} onClick={() => setQuantize((value) => !value)}>
-          Quantize
+        <button type="button" className="submit" onClick={onSubmit} disabled={day.locked || day.attempts.length >= 5}>
+          {day.locked ? "Finished" : `Submit ${Math.min(5, day.attempts.length + 1)} of 5`}
         </button>
       </div>
 
-      <div className="mode-row">
-        <div role="radiogroup" aria-label="Mode" data-testid="mode-toggle">
-          <button type="button" role="radio" aria-checked={day.mode === "easy"} disabled={day.modeLocked} onClick={() => dispatch({ type: "set-mode", mode: "easy" })}>
-            Easy
-          </button>
-          <button type="button" role="radio" aria-checked={day.mode === "hard"} disabled={day.modeLocked} onClick={() => dispatch({ type: "set-mode", mode: "hard" })}>
-            Hard
-          </button>
-        </div>
-        {day.mode === "easy" && !day.locked && !day.sectionFilled && day.hintTier < 5 && (
-          <button type="button" onClick={onHint}>
-            {picksOpen ? "Choose a hint instrument" : `Get a hint (−${nextDock})`}
-          </button>
-        )}
-        {day.mode === "easy" && day.hintTier >= 1 && <p>Glowing instruments are in the song. The others still play, only quieter.</p>}
-        {picksOpen && (
-          <div className="choices" aria-label="Hint instrument">
-            <p>Pick an instrument in the song. About 30% of its notes land on your track.</p>
-            {choices.map((item) => (
-              <button type="button" key={item.id} onClick={() => dispatch({ type: "pick-instrument", instrument: item.id })}>
-                {item.name}
+      {state.tutorialOpen && (
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="How to play">
+            <div className="modal-top">
+              <h2>How to play</h2>
+              <button type="button" aria-label="Close instructions" onClick={() => dispatch({ type: "set-tutorial", open: false })}>
+                Close
               </button>
+            </div>
+            <p>Everyone hears the same 20 seconds of a real song. You play your own version. You get five tries. Your best percentage is kept.</p>
+            <h3>Two ways to add notes</h3>
+            <p>
+              <strong>Play along.</strong> Press record, wait for the count of four, then play for the whole 20 seconds. The song stays quiet while you record.
+            </p>
+            <p>
+              <strong>Place one hit.</strong> Tap a drum, then tap the wave where that sound should go.
+            </p>
+            <div className="example" aria-label={`${EXAMPLE_TITLE} example`}>
+              <p>Piano, played the whole way</p>
+              <div className="ex-row">{Array.from({ length: 12 }, (_, index) => <span key={index} className="ex-note" />)}</div>
+              <p>Kicks, one tap on each beat</p>
+              <div className="ex-row">{Array.from({ length: 4 }, (_, index) => <span key={index} className="ex-hit" />)}</div>
+            </div>
+            <p>Easy can reveal pieces of a hidden arrangement. Those hints lower your score. Hard is the percentage only.</p>
+            <p>After five tries, you can share and see everyone who finished today.</p>
+            <button
+              type="button"
+              disabled={day.locked}
+              onClick={() => {
+                dispatch({ type: "load-example" });
+                setArmed("piano");
+                dispatch({ type: "set-tutorial", open: false });
+              }}
+            >
+              Try the example
+            </button>
+            <button type="button" className="play lets" onClick={() => dispatch({ type: "set-tutorial", open: false })}>
+              Let's play
+            </button>
+          </div>
+        </div>
+      )}
+
+      {instrumentsOpen && (
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="Instruments">
+            <div className="modal-top">
+              <h2>{info.name}</h2>
+              <button type="button" onClick={() => setInstrumentsOpen(false)}>
+                Done
+              </button>
+            </div>
+            <div className="row">
+              <button type="button" aria-pressed={day.tracks.find((track) => track.instrument === armed)?.mute ?? false} onClick={() => dispatch({ type: "mute", instrument: armed })}>
+                Mute
+              </button>
+              <button type="button" aria-pressed={day.tracks.find((track) => track.instrument === armed)?.solo ?? false} onClick={() => dispatch({ type: "solo", instrument: armed })}>
+                Solo
+              </button>
+              <button type="button" onClick={() => dispatch({ type: "clear", instrument: armed })}>
+                Clear
+              </button>
+            </div>
+            <p className="latch">Mute turns this one off. Solo plays only this one. Clear removes its notes.</p>
+            {(["Keys", "Strings", "Drums", "Percussion"] as const).map((group) => (
+              <div key={group}>
+                <h3>{group}</h3>
+                {INSTRUMENTS.filter((item) => item.group === group).map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={armed === item.id ? "inst on" : "inst"}
+                    aria-pressed={armed === item.id}
+                    onClick={() => {
+                      setArmed(item.id);
+                      if (instrumentInfo(item.id).kind === "drum") setLatched(null);
+                      setInstrumentsOpen(false);
+                    }}
+                  >
+                    {item.name}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
-        )}
-        {sectionPrompt && (
-          <div className="choices" aria-label="Section hint">
-            <p>{sectionPrompt === "submit" ? "Last hint before the day locks. Fill a section, or keep the sketch you have." : "Fill one section of the real arrangement."}</p>
+        </div>
+      )}
+
+      {namePrompt && (
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="Your name">
+            <h2>What should we call you?</h2>
+            <p>Your name shows up after the five tries, with everyone else who finished.</p>
+            <label className="name-field">
+              <span>Your name</span>
+              <input value={state.username} maxLength={20} autoComplete="nickname" onChange={(event) => dispatch({ type: "set-name", name: event.target.value })} />
+            </label>
+            <button
+              type="button"
+              className="play"
+              disabled={!nameReady(state.username)}
+              onClick={() => {
+                setNamePrompt(false);
+                finishSubmit();
+              }}
+            >
+              Use this name
+            </button>
+          </div>
+        </div>
+      )}
+
+      {sectionPrompt && (
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="Fill a section">
+            <h2>{sectionPrompt === "submit" ? "Last hint" : "Fill one part"}</h2>
+            <p>This copies part of the hidden arrangement onto your sketch and lowers your score.</p>
             {SECTIONS.map((section) => {
               const available = section.instruments.some((id) => songInstruments.has(id));
               return (
@@ -508,7 +653,7 @@ export function PlayView() {
                     setSectionPrompt(null);
                   }}
                 >
-                  {available ? `Fill ${section.label}` : `${section.label}. Nothing in today's song`}
+                  {section.label}
                 </button>
               );
             })}
@@ -520,7 +665,7 @@ export function PlayView() {
                   dispatch({ type: "submit", declineSection: true });
                 }}
               >
-                Lock my sketch
+                Keep my sketch
               </button>
             )}
             {sectionPrompt === "hint" && (
@@ -529,254 +674,84 @@ export function PlayView() {
               </button>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {day.locked && best && (
-        <section className="compare" aria-label="Today's comparison">
-          <h2>Today's sketch</h2>
-          <p className="calm">{calm}</p>
-          <p>
-            Official {official}%{docks > 0 ? ` · hints −${docks}` : ""} · streak {streak}
-          </p>
-          <div className="row">
-            <button type="button" onClick={() => void resumeAudio().then(() => begin(0, best.events, false))}>
-              Play yours
-            </button>
-            <button type="button" onClick={() => void resumeAudio().then(() => begin(0, song.notes, false))}>
-              Play the song
-            </button>
-            <button type="button" onClick={() => void resumeAudio().then(() => begin(0, [...best.events, ...song.notes], false))}>
-              Play both
-            </button>
-            <button type="button" onClick={() => void share()}>
-              Share
+      {pickPrompt && picksOpen && !state.tutorialOpen && (
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="Hint instrument">
+            <h2>Pick one instrument</h2>
+            <p>About a third of its hidden notes land on your sketch. This lowers your score.</p>
+            {choices.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => {
+                  dispatch({ type: "pick-instrument", instrument: item.id });
+                  setPickPrompt(false);
+                }}
+              >
+                {item.name}
+              </button>
+            ))}
+            <button type="button" onClick={() => setPickPrompt(false)}>
+              Not now
             </button>
           </div>
-          {copied && <p>Link copied.</p>}
-          {shareUrl && <input readOnly value={shareUrl} aria-label="Share link" />}
-          {INSTRUMENTS.filter((item) => best.events.some((note) => note.instrument === item.id) || song.notes.some((note) => note.instrument === item.id)).map((item) => (
-            <div className="lane" key={item.id}>
-              <h3>{item.name}</h3>
-              <div className="lane-row you" aria-label={`${item.name} yours`}>
-                {best.events
-                  .filter((note) => note.instrument === item.id)
-                  .map((note, index) => (
-                    <span key={index} className="blip you" style={{ left: `${(note.time / 20) * 100}%`, width: `${Math.max(0.8, (note.duration / 20) * 100)}%` }} />
-                  ))}
-              </div>
-              <div className="lane-row ref" aria-label={`${item.name} song`}>
-                {song.notes
-                  .filter((note) => note.instrument === item.id)
-                  .map((note, index) => (
-                    <span key={index} className="blip ref" style={{ left: `${(note.time / 20) * 100}%`, width: `${Math.max(0.8, (note.duration / 20) * 100)}%` }} />
-                  ))}
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
-
-      <section className="tutorial" aria-label="How to play">
-        <div className="row">
-          <h2>How to play</h2>
-          <button type="button" onClick={() => dispatch({ type: "toggle-tutorial" })}>
-            {state.tutorialOpen ? "Hide instructions" : "Show instructions"}
-          </button>
-        </div>
-        {state.tutorialOpen && (
-          <>
-            <ol>
-              <li>Hit play and scrub the 20 seconds.</li>
-              <li>Pick an instrument and record a full pass over the metronome.</li>
-              <li>Or drop a single note, or paint a drum pattern, and put a kick on a specific beat.</li>
-              <li>Five tries. Keep the best percentage.</li>
-              <li>Easy mode nudges and docks a little. Hard mode is the percentage only.</li>
-              <li>Then the board.</li>
-            </ol>
-            <p>
-              Example sketch: {EXAMPLE_TITLE}. The piano line is a full pass. The kicks were punched in on beat 1 of each bar.
-              Loading it does not submit and does not touch your streak.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                if (day.locked) return;
-                dispatch({ type: "load-example" });
-                setHear(false);
-                setArmed("piano");
-                setNotice(`${EXAMPLE_TITLE} is in the studio. Press play to hear it.`);
-              }}
-              disabled={day.locked}
-            >
-              Load the example
-            </button>
-          </>
-        )}
-      </section>
-
-      {!desktop && (
-        <button type="button" className="instrument-launch" onClick={() => setSheet(true)}>
-          Instruments
-        </button>
-      )}
-
-      <div className="player">
-        {info.kind === "pitched" ? (
-          <Keyboard
-            base={info.baseMidi}
-            latched={latched}
-            held={heldNotes}
-            barred={armed === "glock" || armed === "xylo"}
-            onDown={pitchDown}
-            onUp={pitchUp}
-          />
-        ) : (
-          <Pads drums={drumsFor(armed)} latched={latchedDrum} onHit={drumHit} />
-        )}
-        {info.kind === "drum" && <DrumGrid key={armed} instrument={armed} bpm={song.bpm} onLoop={(events) => dispatch({ type: "add-events", instrument: armed, events })} />}
-        <p className="latch">
-          {info.kind === "pitched"
-            ? latched == null
-              ? "Tap a key to latch it, then drop it on the timeline."
-              : `Latched ${noteName(latched)}. Tap the timeline or drop it at the playhead.`
-            : `Placing ${DRUM_LABELS[latchedDrum ?? drumsFor(armed)[0]]}. Tap the timeline for one hit, or paint a bar.`}
-        </p>
-        <p className="keys-help">Computer keys: A row and W row.</p>
-        <button type="button" onClick={() => dropAt(playheadRef.current)} disabled={day.locked || (info.kind === "pitched" && latched == null)}>
-          Drop at playhead
-        </button>
-      </div>
-
-      <ul className="tracks">
-        {(day.tracks.some((track) => track.instrument === armed) ? day.tracks : [...day.tracks, { instrument: armed, events: [], mute: false, solo: false }]).map((track) => {
-          const name = instrumentInfo(track.instrument).name;
-          return (
-            <li key={track.instrument} className={track.instrument === armed ? "armed" : ""}>
-              <button type="button" aria-label={`Arm ${name}`} aria-pressed={track.instrument === armed} onClick={() => choose(track.instrument)}>
-                {name}
-              </button>
-              {track.technique && <span className="tag">{track.technique}</span>}
-              <span data-testid={`count-${track.instrument}`}>{track.events.length} notes</span>
-              <button type="button" aria-label={`Mute ${name}`} aria-pressed={track.mute} onClick={() => dispatch({ type: "mute", instrument: track.instrument })}>
-                Mute
-              </button>
-              <button type="button" aria-label={`Solo ${name}`} aria-pressed={track.solo} onClick={() => dispatch({ type: "solo", instrument: track.instrument })}>
-                Solo
-              </button>
-              <button type="button" aria-label={`Clear ${name}`} onClick={() => dispatch({ type: "clear", instrument: track.instrument })}>
-                Clear
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      <Timeline
-        events={timelineEvents}
-        playhead={playhead}
-        disabled={day.locked}
-        onDrop={dropAt}
-        onDelete={(index) => dispatch({ type: "delete-event", instrument: armed, index })}
-        onResize={(index, duration) =>
-          dispatch({
-            type: "resize-event",
-            instrument: armed,
-            index,
-            duration: quantize ? Math.max(beatSeconds(song.bpm) / 4, quantizeTime(duration, song.bpm, true)) : duration,
-          })
-        }
-      />
-
-      <section className="tries">
-        <label className="name-field">
-          <span>Your name</span>
-          <input
-            ref={nameRef}
-            value={state.username}
-            maxLength={20}
-            autoComplete="nickname"
-            onChange={(event) => dispatch({ type: "set-name", name: event.target.value })}
-          />
-        </label>
-        {needName && <p>Add a name and the board will know this sketch.</p>}
-        <ol className="attempts" data-testid="attempts">
-          {Array.from({ length: 5 }, (_, index) => {
-            const attempt = day.attempts[index];
-            const isBest = attempt && best ? attempt.raw === best.raw && day.attempts.findIndex((item) => item.raw === best.raw) === index : false;
-            return (
-              <li key={index}>
-                <span>Try {index + 1}</span>
-                <span>{attempt ? `${attempt.raw}%` : "—"}</span>
-                {isBest && <span className="tag">best</span>}
-              </li>
-            );
-          })}
-        </ol>
-        <button type="button" onClick={onSubmit} disabled={day.locked || day.attempts.length >= 5}>
-          {day.locked ? "Day locked" : "Submit try"}
-        </button>
-      </section>
-
-      {(desktop || sheet) && (
-        <div
-          className={desktop ? "picker" : "sheet"}
-          role={desktop ? "region" : "dialog"}
-          aria-label="Instruments"
-          data-testid={desktop ? "instrument-column" : "instrument-sheet"}
-        >
-          {!desktop && (
-            <button type="button" onClick={() => setSheet(false)}>
-              Done
-            </button>
-          )}
-          {(["Keys", "Strings", "Drums", "Percussion"] as const).map((group) => (
-            <div key={group}>
-              <h2>{group}</h2>
-              {INSTRUMENTS.filter((item) => item.group === group).map((item) => {
-                const glow = day.mode === "easy" && day.hintTier >= 1 && songInstruments.has(item.id);
-                const quiet = day.mode === "easy" && day.hintTier >= 1 && !songInstruments.has(item.id);
-                return (
-                  <button
-                    type="button"
-                    key={item.id}
-                    className={glow ? "inst glow" : quiet ? "inst quiet" : "inst"}
-                    aria-pressed={armed === item.id}
-                    onClick={() => choose(item.id)}
-                  >
-                    {item.name}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
         </div>
       )}
 
       {replacePrompt && (
-        <div className="sheet" role="dialog" aria-label="This track has notes">
-          <p>This track has notes. Replace them, or overdub?</p>
-          <div className="row">
-            <button
-              type="button"
-              onClick={() => {
-                setReplacePrompt(false);
-                void startRecord("replace");
-              }}
-            >
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="This instrument already has notes">
+            <h2>{info.name} already has notes</h2>
+            <p>Replace them, or add more on top?</p>
+            <button type="button" onClick={() => { setReplacePrompt(false); void startRecord("replace"); }}>
               Replace
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setReplacePrompt(false);
-                void startRecord("overdub");
-              }}
-            >
-              Overdub
+            <button type="button" onClick={() => { setReplacePrompt(false); void startRecord("overdub"); }}>
+              Add more
             </button>
             <button type="button" onClick={() => setReplacePrompt(false)}>
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {resultOpen && day.locked && best && (
+        <div className="overlay">
+          <div className="modal" role="dialog" aria-label="Today's result">
+            <div className="modal-top">
+              <h2>Today's result</h2>
+              <button type="button" onClick={() => setResultOpen(false)}>
+                Close
+              </button>
+            </div>
+            <p className="score-num" data-testid="score">
+              {official}%
+            </p>
+            {docks > 0 && <p>Hints lowered this by {docks}.</p>}
+            <p className="calm">{calm}</p>
+            <pre className="wordle">{resultCopy}</pre>
+            <button type="button" onClick={() => void copyResult()}>
+              {copied ? "Copied" : "Copy result"}
+            </button>
+            <button type="button" onClick={() => { stopSong(); void resumeAudio().then(() => begin(0, best.events, false)); }}>
+              Hear your sketch
+            </button>
+            <button type="button" onClick={() => { stopSong(); void resumeAudio().then(() => begin(0, song.notes, false)); }}>
+              Hear the hidden arrangement
+            </button>
+            <button
+              type="button"
+              className="play"
+              onClick={() => {
+                setResultOpen(false);
+                location.hash = "#leaderboard";
+              }}
+            >
+              Everyone today
             </button>
           </div>
         </div>

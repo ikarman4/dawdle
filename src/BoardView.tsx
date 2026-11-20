@@ -5,7 +5,7 @@ import { sameName, useGame } from "./store";
 import type { BoardCard } from "./types";
 
 export function BoardView() {
-  const { state, cards, dispatch } = useGame();
+  const { state, day, cards, dispatch } = useGame();
   const [tab, setTab] = useState<"global" | "friends">("global");
   const [active, setActive] = useState<string | null>(null);
 
@@ -34,9 +34,6 @@ export function BoardView() {
   const todayCards = cards
     .filter((card) => card.date === state.today)
     .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username));
-  const earlier = cards
-    .filter((card) => card.date !== state.today)
-    .sort((a, b) => b.date.localeCompare(a.date) || b.score - a.score);
   const friendCards = todayCards.filter(
     (card) => state.follows.some((name) => sameName(name, card.username)) && !sameName(card.username, state.username),
   );
@@ -72,11 +69,26 @@ export function BoardView() {
     );
   }
 
+  if (!day.locked) {
+    return (
+      <section className="board" data-testid="board">
+        <header className="header">
+          <div>
+            <h1 className="wordmark">Today</h1>
+            <p className="date">{state.today} UTC</p>
+          </div>
+        </header>
+        <p>Finish all five tries to see everyone's submissions.</p>
+        <a href="#play">Back to today</a>
+      </section>
+    );
+  }
+
   return (
     <section className="board" data-testid="board">
       <header className="header">
         <div>
-          <h1 className="wordmark">Board</h1>
+          <h1 className="wordmark">Today</h1>
           <p className="date">{state.today} UTC</p>
         </div>
       </header>
@@ -98,31 +110,16 @@ export function BoardView() {
       )}
       {tab === "global" ? (
         <>
-          {todayCards.length === 0 && earlier.length === 0 ? (
-            <p>
-              The global board is this browser, plus any sketch you open from a share link. Submit a try, or open someone's link, and a card
-              shows up here. Nobody is invented.
-            </p>
+          {todayCards.length === 0 ? (
+            <p>This page is this browser, plus sketches opened from a share link. Nobody is invented.</p>
           ) : (
             <>
-              {state.imports.length === 0 && (
-                <p>Shared compositions show up here when you open someone's link. The board never invents players.</p>
-              )}
+              {state.imports.length === 0 && <p>Shared sketches show up here when you open someone's link. Nobody is invented.</p>}
               <ol className="feed">
                 {todayCards.map((card, index) => (
                   <Card key={card.id} card={card} rank={index + 1} />
                 ))}
               </ol>
-              {earlier.length > 0 && (
-                <>
-                  <h2>Earlier days</h2>
-                  <ol className="feed">
-                    {earlier.map((card) => (
-                      <Card key={card.id} card={card} />
-                    ))}
-                  </ol>
-                </>
-              )}
             </>
           )}
         </>

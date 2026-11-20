@@ -4,11 +4,11 @@ import { PlayView } from "./PlayView";
 import { GameProvider } from "./store";
 import { YouView } from "./YouView";
 
-type View = "play" | "board" | "you";
+type View = "play" | "leaderboard" | "you";
 
 function viewFromHash(): View {
   const raw = location.hash.replace(/^#/, "");
-  if (raw.startsWith("board") || raw.startsWith("s/")) return "board";
+  if (raw.startsWith("leaderboard")) return "leaderboard";
   if (raw.startsWith("you")) return "you";
   return "play";
 }
@@ -25,15 +25,12 @@ function Shell() {
     <div className="app">
       <main>
         {view === "play" && <PlayView />}
-        {view === "board" && <BoardView />}
+        {view === "leaderboard" && <BoardView />}
         {view === "you" && <YouView />}
       </main>
       <nav className="nav" aria-label="Primary">
         <a href="#play" aria-current={view === "play" ? "page" : undefined}>
           Play
-        </a>
-        <a href="#board" aria-current={view === "board" ? "page" : undefined}>
-          Board
         </a>
         <a href="#you" aria-current={view === "you" ? "page" : undefined}>
           You

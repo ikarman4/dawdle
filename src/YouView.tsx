@@ -53,15 +53,18 @@ export function YouView() {
       </dl>
       <p>
         {average == null ? "Your average starts when a day locks." : `Your average is ${average}%.`}{" "}
-        {boardAverage == null
-          ? "The board average shows up when a shared composition is opened."
-          : `Today's board average is ${boardAverage}%.`}
+        {!day.locked
+          ? "Today's average opens after you finish."
+          : boardAverage == null
+            ? "The average shows up when a shared sketch is opened."
+            : `Today's average is ${boardAverage}%.`}
       </p>
       <h2>Today</h2>
       <p>
         {song.title} · {day.locked ? `Official ${own?.score ?? 0}%` : day.attempts.length ? "Still open" : "Not started"}
       </p>
-      {own ? (
+      {!day.locked && <p>Sharing and other people's scores open after all five tries.</p>}
+      {day.locked && own ? (
         <div className="row">
           <button type="button" onClick={() => void copy()}>
             Share
@@ -69,9 +72,9 @@ export function YouView() {
           {copied && <p>Link copied.</p>}
         </div>
       ) : (
-        <p>Share turns on when the day locks.</p>
+        day.locked && <p>Add a name on your next try and sharing turns on.</p>
       )}
-      {shareUrl && <input readOnly value={shareUrl} aria-label="Share link" />}
+      {day.locked && shareUrl && <input readOnly value={shareUrl} aria-label="Share link" />}
       <h2>Following</h2>
       {state.follows.length === 0 ? (
         <p>Follow someone from a shared card. Their name lands here.</p>

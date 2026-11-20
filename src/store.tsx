@@ -46,6 +46,7 @@ type Action =
   | { type: "set-name"; name: string }
   | { type: "set-mode"; mode: "easy" | "hard" }
   | { type: "toggle-tutorial" }
+  | { type: "set-tutorial"; open: boolean }
   | { type: "roll"; today: string }
   | { type: "reveal" }
   | { type: "add-events"; instrument: InstrumentId; events: NoteEvent[] }
@@ -154,6 +155,8 @@ function reducer(state: GameState, action: Action): GameState {
       return commit({ ...current, mode: action.mode });
     case "toggle-tutorial":
       return { ...state, tutorialOpen: !state.tutorialOpen };
+    case "set-tutorial":
+      return { ...state, tutorialOpen: action.open };
     case "roll":
       return action.today === state.today ? state : { ...state, today: action.today };
     case "reveal":
@@ -310,8 +313,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       if (!payload) return;
       const card = decodeShare(payload);
       if (card) dispatch({ type: "import", card });
-      const view = raw.startsWith("you") ? "you" : "board";
-      history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
+      history.replaceState(null, "", `${location.pathname}${location.search}#play`);
     };
     apply();
     window.addEventListener("hashchange", apply);

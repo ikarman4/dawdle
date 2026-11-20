@@ -5,15 +5,17 @@ import { DRUM_LABELS, drumsFor, noteName, type DrumName, type InstrumentId, type
 
 export function Waveform({
   notes,
+  peaks: provided,
   playhead,
   onScrub,
 }: {
   notes: NoteEvent[];
+  peaks?: number[];
   playhead: number;
   onScrub: (time: number, phase: "down" | "move" | "up") => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const peaks = useMemo(() => peaksFor(notes, 180), [notes]);
+  const peaks = useMemo(() => provided ?? peaksFor(notes, 180), [notes, provided]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -246,7 +248,7 @@ export function DrumGrid({
         ))}
       </div>
       <button type="button" className="loop" onClick={loop}>
-        Loop across the song
+        Repeat for all 20 seconds
       </button>
     </div>
   );
